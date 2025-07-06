@@ -5,21 +5,17 @@ Extracts structured purchase order data from PDF documents using multiple parsin
 """
 
 import re
-import asyncio
+import PyPDF2
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 from decimal import Decimal
 from datetime import datetime
 from dataclasses import dataclass
 
-from loguru import logger
-
 # TODO: Import PDF parsing libraries (uncomment when packages are installed)
-# import PyPDF2
 # import fitz  # PyMuPDF
 # import pdfplumber
 # from dateutil.parser import parse as parse_date
-
 
 @dataclass
 class PurchaseOrderData:
@@ -28,11 +24,11 @@ class PurchaseOrderData:
     vendor: Optional[str] = None
     date: Optional[datetime] = None
     total_amount: Optional[Decimal] = None
-    line_items: List[Dict[str, Any]] = None
+    line_items: Optional[List[Dict[str, Any]]] = None
     extraction_confidence: float = 0.0
     extraction_method: str = "unknown"
     raw_text: str = ""
-    metadata: Dict[str, Any] = None
+    metadata: Optional[Dict[str, Any]] = None
     
     def __post_init__(self):
         if self.line_items is None:
@@ -106,7 +102,7 @@ class PurchaseOrderPDFParser:
             PurchaseOrderData object with extracted information
         """
         try:
-            logger.info(f"Parsing PDF: {file_path}")
+            print(f"INFO: Parsing PDF: {file_path}")
             
             # Validate file
             if not self._validate_pdf(file_path):
@@ -120,21 +116,21 @@ class PurchaseOrderPDFParser:
                 result = await self._extract_with_pypdf2(file_path)
                 extraction_results.append(result)
             except Exception as e:
-                logger.warning(f"PyPDF2 extraction failed: {e}")
+                print(f"WARNING: PyPDF2 extraction failed: {e}")
             
             # Method 2: PDFPlumber (advanced text extraction)
             try:
                 result = await self._extract_with_pdfplumber(file_path)
                 extraction_results.append(result)
             except Exception as e:
-                logger.warning(f"PDFPlumber extraction failed: {e}")
+                print(f"WARNING: PDFPlumber extraction failed: {e}")
             
             # Method 3: PyMuPDF (fallback)
             try:
                 result = await self._extract_with_pymupdf(file_path)
                 extraction_results.append(result)
             except Exception as e:
-                logger.warning(f"PyMuPDF extraction failed: {e}")
+                print(f"WARNING: PyMuPDF extraction failed: {e}")
             
             # Select best result
             if not extraction_results:
@@ -145,11 +141,11 @@ class PurchaseOrderPDFParser:
             # Post-process and validate
             validated_result = self._validate_and_clean_data(best_result)
             
-            logger.info(f"PDF parsing completed. Confidence: {validated_result.extraction_confidence:.2f}")
+            print(f"INFO: PDF parsing completed. Confidence: {validated_result.extraction_confidence:.2f}")
             return validated_result
             
         except Exception as e:
-            logger.error(f"Error parsing PDF {file_path}: {e}")
+            print(f"ERROR: Error parsing PDF {file_path}: {e}")
             raise
     
     def _validate_pdf(self, file_path: str) -> bool:
@@ -170,33 +166,32 @@ class PurchaseOrderPDFParser:
             return True
             
         except Exception as e:
-            logger.error(f"PDF validation failed: {e}")
+            print(f"ERROR: PDF validation failed: {e}")
             return False
     
     async def _extract_with_pypdf2(self, file_path: str) -> PurchaseOrderData:
         """Extract data using PyPDF2"""
-        # TODO: Implement PyPDF2 extraction
-        # try:
-        #     with open(file_path, 'rb') as file:
-        #         pdf_reader = PyPDF2.PdfReader(file)
-        #         text = ""
-        #         for page in pdf_reader.pages:
-        #             text += page.extract_text()
-        #         
-        #         po_data = self._extract_structured_data(text)
-        #         po_data.extraction_method = "pypdf2"
-        #         po_data.raw_text = text
-        #         return po_data
-        # except Exception as e:
-        #     logger.error(f"PyPDF2 extraction failed: {e}")
-        #     raise
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text()
+                
+                po_data = self._extract_structured_data(text)
+                po_data.extraction_method = "pypdf2"
+                po_data.raw_text = text
+                return po_data
+        except Exception as e:
+            print(f"ERROR: PyPDF2 extraction failed: {e}")
+            raise
         
         # Placeholder implementation
-        po_data = PurchaseOrderData()
-        po_data.extraction_method = "pypdf2_placeholder"
-        po_data.extraction_confidence = 0.3
-        po_data.raw_text = "TODO: Implement PyPDF2 extraction"
-        return po_data
+        # po_data = PurchaseOrderData()
+        # po_data.extraction_method = "pypdf2_placeholder"
+        # po_data.extraction_confidence = 0.3
+        # po_data.raw_text = "TODO: Implement PyPDF2 extraction"
+        # return po_data
     
     async def _extract_with_pdfplumber(self, file_path: str) -> PurchaseOrderData:
         """Extract data using pdfplumber"""
@@ -212,7 +207,7 @@ class PurchaseOrderPDFParser:
         #         po_data.raw_text = text
         #         return po_data
         # except Exception as e:
-        #     logger.error(f"pdfplumber extraction failed: {e}")
+        #     print(f"ERROR: pdfplumber extraction failed: {e}")
         #     raise
         
         # Placeholder implementation
@@ -237,7 +232,7 @@ class PurchaseOrderPDFParser:
         #     po_data.raw_text = text
         #     return po_data
         # except Exception as e:
-        #     logger.error(f"PyMuPDF extraction failed: {e}")
+        #     print(f"ERROR: PyMuPDF extraction failed: {e}")
         #     raise
         
         # Placeholder implementation
@@ -278,7 +273,7 @@ class PurchaseOrderPDFParser:
             return po_data
             
         except Exception as e:
-            logger.error(f"Error extracting structured data: {e}")
+            print(f"ERROR: Error extracting structured data: {e}")
             raise
     
     def _extract_field(self, text: str, field_name: str) -> Optional[str]:
@@ -289,10 +284,10 @@ class PurchaseOrderPDFParser:
             match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 result = match.group(1).strip()
-                logger.debug(f"Extracted {field_name}: {result}")
+                print(f"DEBUG: Extracted {field_name}: {result}")
                 return result
         
-        logger.debug(f"Could not extract {field_name}")
+        print(f"DEBUG: Could not extract {field_name}")
         return None
     
     def _extract_line_items(self, text: str) -> List[Dict[str, Any]]:
@@ -332,7 +327,7 @@ class PurchaseOrderPDFParser:
             clean_str = re.sub(r'[$,]', '', amount_str.strip())
             return Decimal(clean_str)
         except Exception as e:
-            logger.error(f"Error parsing currency '{amount_str}': {e}")
+            print(f"ERROR: Error parsing currency '{amount_str}': {e}")
             return None
     
     def _parse_date(self, date_str: str) -> Optional[datetime]:
@@ -361,7 +356,7 @@ class PurchaseOrderPDFParser:
             return None
             
         except Exception as e:
-            logger.error(f"Error parsing date '{date_str}': {e}")
+            print(f"ERROR: Error parsing date '{date_str}': {e}")
             return None
     
     def _calculate_confidence(self, po_data: PurchaseOrderData) -> float:
@@ -405,25 +400,26 @@ class PurchaseOrderPDFParser:
             # Validate date range
             if po_data.date:
                 if po_data.date.year < 2000 or po_data.date.year > 2030:
-                    logger.warning(f"Date seems invalid: {po_data.date}")
+                    print(f"WARNING: Date seems invalid: {po_data.date}")
                     po_data.date = None
             
             # Validate amounts
             if po_data.total_amount and po_data.total_amount <= 0:
-                logger.warning(f"Total amount seems invalid: {po_data.total_amount}")
+                print(f"WARNING: Total amount seems invalid: {po_data.total_amount}")
                 po_data.total_amount = None
             
             # Validate line items
-            for item in po_data.line_items:
-                if item.get('quantity', 0) <= 0:
-                    logger.warning(f"Invalid quantity in line item: {item}")
-                if item.get('unit_price', 0) <= 0:
-                    logger.warning(f"Invalid unit price in line item: {item}")
+            if po_data.line_items:
+                for item in po_data.line_items:
+                    if item.get('quantity', 0) <= 0:
+                        print(f"WARNING: Invalid quantity in line item: {item}")
+                    if item.get('unit_price', 0) <= 0:
+                        print(f"WARNING: Invalid unit price in line item: {item}")
             
             return po_data
             
         except Exception as e:
-            logger.error(f"Error validating data: {e}")
+            print(f"ERROR: Error validating data: {e}")
             return po_data
     
     def _clean_vendor_name(self, vendor: str) -> str:
@@ -476,7 +472,7 @@ class PurchaseOrderPDFParser:
             }
             
         except Exception as e:
-            logger.error(f"Error getting PDF info: {e}")
+            print(f"ERROR: Error getting PDF info: {e}")
             return {}
 
 

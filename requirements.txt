@@ -3,7 +3,6 @@ fastmcp>=0.1.0
 
 # Database dependencies
 sqlalchemy>=2.0.0
-sqlite3  # Built-in Python module
 
 # PDF parsing dependencies
 PyPDF2>=3.0.0
@@ -13,10 +12,10 @@ pymupdf>=1.23.0  # Alternative PDF parser (fitz)
 # Data extraction and processing
 regex>=2023.0.0
 python-dateutil>=2.8.0  # For date parsing
-decimal>=1.70  # For precise currency calculations
+# decimal>=1.70  # For precise currency calculations
 
 # Text processing and pattern matching
-re2>=1.0.0  # Fast regex engine
+# re2>=1.0.0  # Fast regex engine
 fuzzywuzzy>=0.18.0  # For fuzzy string matching
 python-levenshtein>=0.21.0  # For string similarity
 
