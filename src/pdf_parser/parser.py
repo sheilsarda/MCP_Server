@@ -340,7 +340,6 @@ class BusinessDocumentPDFParser:
         # Extract common fields
         doc_data.vendor = self._extract_field(text, 'vendor')
         doc_data.date = self._parse_date_field(text, 'date')
-        doc_data.total_amount = self._parse_currency_field(text, 'total')
         doc_data.line_items = self._extract_line_items(text)
         doc_data.extraction_confidence = self._calculate_confidence(doc_data)
         
@@ -488,6 +487,7 @@ class BusinessDocumentPDFParser:
             print(f"ERROR: Error parsing date '{date_str}': {e}")
             return None
     
+    ## Note: this method is not great and should be removed; TODO: come up with a better metric of how well the parser did
     def _calculate_confidence(self, doc_data: DocumentData) -> float:
         """Calculate extraction confidence score"""
         confidence_factors = []
@@ -499,7 +499,10 @@ class BusinessDocumentPDFParser:
             confidence_factors.append(0.2)
         if doc_data.date:
             confidence_factors.append(0.1)
-        if doc_data.total_amount:
+        
+        # Total amount (only for documents that have this field)
+        total_amount = getattr(doc_data, 'total_amount', None)
+        if total_amount:
             confidence_factors.append(0.2)
         
         # Line items
@@ -540,10 +543,11 @@ class BusinessDocumentPDFParser:
                     print(f"WARNING: Date seems invalid: {doc_data.date}")
                     doc_data.date = None
             
-            # Validate amounts
-            if doc_data.total_amount and doc_data.total_amount <= 0:
-                print(f"WARNING: Total amount seems invalid: {doc_data.total_amount}")
-                doc_data.total_amount = None
+            # Validate amounts (only for documents that have this field)
+            total_amount = getattr(doc_data, 'total_amount', None)
+            if total_amount and total_amount <= 0:
+                print(f"WARNING: Total amount seems invalid: {total_amount}")
+                setattr(doc_data, 'total_amount', None)
             
             # Validate line items
             if doc_data.line_items:
