@@ -32,8 +32,7 @@ class DocumentData:
     document_number: Optional[str] = None
     vendor: Optional[str] = None
     date: Optional[datetime] = None
-    total_amount: Optional[Decimal] = None
-    line_items: Optional[List[Dict[str, Any]]] = None
+    line_items: Optional[List[Dict[str, Any]]] = None # catch-all
     extraction_confidence: float = 0.0
     extraction_method: str = "unknown"
     raw_text: str = ""
@@ -49,6 +48,7 @@ class DocumentData:
 class PurchaseOrderData(DocumentData):
     """Purchase Order specific data"""
     po_number: Optional[str] = None
+    total_amount: Optional[Decimal] = None
     
     def __post_init__(self):
         super().__post_init__()
@@ -62,6 +62,11 @@ class InvoiceData(DocumentData):
     """Invoice specific data"""
     invoice_number: Optional[str] = None
     reference_po: Optional[str] = None
+    item: Optional[str] = None
+    quantity: Optional[int] = None
+    unit_price: Optional[Decimal] = None
+    total_amount: Optional[Decimal] = None
+    # Vendor info is covered in the base class
     
     def __post_init__(self):
         super().__post_init__()
@@ -74,11 +79,11 @@ class InvoiceData(DocumentData):
 class ReceiptData(DocumentData):
     """Receipt specific data"""
     receipt_id: Optional[str] = None
-    vendor: Optional[str] = None
     reference_po: Optional[str] = None
     item: Optional[str] = None
     quantity_received: Optional[int] = None
     date_received: Optional[datetime] = None
+    # Vendor info is covered in the base class
     
     def __post_init__(self):
         super().__post_init__()
