@@ -63,7 +63,6 @@ class PDFProcessingWorkflow:
         """Process all PDF files in the specified directory"""
         print(f"📄 Processing PDF files from: {pdf_directory}")
         
-        pdf_files = []
         pdf_dir = Path(pdf_directory)
         
         if not pdf_dir.exists():
@@ -88,7 +87,7 @@ class PDFProcessingWorkflow:
                         "document_number": document_data.document_number,
                         "vendor": document_data.vendor,
                         "confidence": document_data.extraction_confidence,
-                        "database_id": stored_document.id
+                        "database_id": stored_document['id']
                     })
                     print(f"✅ Successfully processed and stored: {file_path.name}")
                 else:
@@ -101,19 +100,30 @@ class PDFProcessingWorkflow:
         
         return self.processed_documents
     
-    async def store_document_data(self, document_data, file_path: str) -> BusinessDocument:
-        """Store parsed document data in the database"""
+    async def store_document_data(self, document_data, file_path: str) -> Dict[str, Any]:
+        """Store parsed document data in the database and return document info"""
         try:
             with DatabaseSession(self.db_path) as session:
                 # Get or create vendor
                 vendor = self.get_or_create_vendor(session, document_data.vendor)
+                
+                # Determine the appropriate date for this document type
+                document_date = document_data.date
+                
+                # For receipts, use date_received if date is None
+                from pdf_parser.parser import DocumentType as ParserDocumentType
+                if (document_data.document_type == ParserDocumentType.RECEIPT and 
+                    document_date is None and 
+                    hasattr(document_data, 'date_received') and 
+                    document_data.date_received is not None):
+                    document_date = document_data.date_received
                 
                 # Create main business document record
                 business_doc = BusinessDocument(
                     document_type=self.convert_document_type(document_data.document_type),
                     document_number=document_data.document_number,
                     vendor=document_data.vendor,
-                    date=document_data.date,
+                    date=document_date,
                     pdf_filename=Path(file_path).name,
                     pdf_path=file_path,
                     pdf_file_size=Path(file_path).stat().st_size,
@@ -145,7 +155,16 @@ class PDFProcessingWorkflow:
                 self.update_vendor_statistics(session, vendor, document_data)
                 
                 session.commit()
-                return business_doc
+                
+                # Access ID before session closes to avoid detachment issues
+                document_id = business_doc.id
+                
+                # Create a simple dict with the data we need instead of returning the SQLAlchemy object
+                return {
+                    'id': document_id,
+                    'document_type': business_doc.document_type,
+                    'document_number': business_doc.document_number
+                }
                 
         except Exception as e:
             print(f"❌ Error storing document data: {e}")
