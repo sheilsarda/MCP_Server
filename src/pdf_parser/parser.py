@@ -74,9 +74,11 @@ class InvoiceData(DocumentData):
 class ReceiptData(DocumentData):
     """Receipt specific data"""
     receipt_id: Optional[str] = None
+    vendor: Optional[str] = None
     reference_po: Optional[str] = None
-    date_received: Optional[datetime] = None
+    item: Optional[str] = None
     quantity_received: Optional[int] = None
+    date_received: Optional[datetime] = None
     
     def __post_init__(self):
         super().__post_init__()
@@ -311,12 +313,12 @@ class BusinessDocumentPDFParser:
         
         # Extract receipt-specific fields
         receipt_data.receipt_id = self._extract_field(text, 'receipt_id')
-        receipt_data.reference_po = self._extract_field(text, 'reference_po')
         receipt_data.vendor = self._extract_field(text, 'vendor')
-        receipt_data.date = self._parse_date_field(text, 'date')
-        receipt_data.date_received = self._parse_date_field(text, 'date_received')
+        receipt_data.reference_po = self._extract_field(text, 'reference_po')
+        receipt_data.item = self._extract_field(text, 'item')
         receipt_data.quantity_received = self._parse_int_field(text, 'quantity_received')
-        receipt_data.line_items = self._extract_line_items(text)
+        receipt_data.date_received = self._parse_date_field(text, 'date_received')
+        # receipt_data.line_items = self._extract_line_items(text)
         
         # Set document_number for consistency
         if receipt_data.receipt_id:
