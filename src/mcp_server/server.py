@@ -1,7 +1,7 @@
 """
-FastMCP Server for Purchase Order PDF Parser
+FastMCP Server for Business Document PDF Parser
 
-This server provides MCP tools for parsing PDF purchase orders and managing them in a database.
+This server provides MCP tools for parsing PDF documents and managing them in a database.
 """
 
 import asyncio
@@ -15,20 +15,27 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from loguru import logger
 
-# TODO: Import modules when implementations are complete
-# from ..database.connection import get_db_session, init_database, search_purchase_orders
-# from ..database.models import PurchaseOrder, PurchaseOrderItem, PurchaseOrderCreate, PurchaseOrderItemCreate
-# from ..pdf_parser.parser import PurchaseOrderPDFParser, PurchaseOrderData
+# Import database and parsing modules
+from ..database.queries import (
+    search_business_documents, get_document_by_id as db_get_document_by_id, 
+    list_business_documents, get_database_summary, 
+    search_by_document_number as db_search_by_document_number, 
+    search_by_vendor as db_search_by_vendor, 
+    get_purchase_orders as db_get_purchase_orders, 
+    store_parsed_document, initialize_database, get_database_info
+)
+from ..database.models import DocumentType
+from ..pdf_parser.parser import BusinessDocumentPDFParser
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
-mcp = FastMCP("Purchase Order PDF Parser")
+mcp = FastMCP("Business Document PDF Parser")
 
 # Initialize PDF parser
-# pdf_parser = PurchaseOrderPDFParser()
+pdf_parser = BusinessDocumentPDFParser()
 
 
 class ParsePDFRequest(BaseModel):
@@ -40,7 +47,8 @@ class ParsePDFRequest(BaseModel):
 class ParsePDFResponse(BaseModel):
     """Response model for PDF parsing"""
     success: bool
-    po_number: Optional[str] = None
+    document_number: Optional[str] = None
+    document_type: Optional[str] = None
     vendor: Optional[str] = None
     date: Optional[str] = None
     total_amount: Optional[float] = None
@@ -51,14 +59,14 @@ class ParsePDFResponse(BaseModel):
     error: Optional[str] = None
 
 
-class SearchPORequest(BaseModel):
-    """Request model for searching purchase orders"""
+class SearchDocumentsRequest(BaseModel):
+    """Request model for searching documents"""
     query: str = Field(..., description="Search query")
     limit: int = Field(default=20, description="Maximum number of results")
     include_line_items: bool = Field(default=False, description="Whether to include line item details")
 
 
-class SearchPOResponse(BaseModel):
+class SearchDocumentsResponse(BaseModel):
     """Response model for search results"""
     success: bool
     results: List[Dict[str, Any]]
@@ -66,10 +74,11 @@ class SearchPOResponse(BaseModel):
     error: Optional[str] = None
 
 
-class POSummaryResponse(BaseModel):
-    """Response model for PO summary statistics"""
+class DocumentSummaryResponse(BaseModel):
+    """Response model for document summary statistics"""
     success: bool
-    total_pos: int = 0
+    total_documents: int = 0
+    document_counts: Dict[str, int] = {}
     total_value: float = 0.0
     unique_vendors: int = 0
     date_range: Optional[Dict[str, str]] = None
@@ -78,9 +87,9 @@ class POSummaryResponse(BaseModel):
 
 
 @mcp.tool()
-async def parse_pdf_purchase_order(file_path: str, store_in_db: bool = True) -> ParsePDFResponse:
+async def parse_pdf_document(file_path: str, store_in_db: bool = True) -> ParsePDFResponse:
     """
-    Parse a PDF purchase order and extract structured data.
+    Parse a PDF document and extract structured data.
     
     Args:
         file_path: Path to the PDF file
@@ -90,7 +99,7 @@ async def parse_pdf_purchase_order(file_path: str, store_in_db: bool = True) -> 
         ParsePDFResponse with parsed data and storage results
     """
     try:
-        logger.info(f"Parsing PDF purchase order: {file_path}")
+        logger.info(f"Parsing PDF document: {file_path}")
         
         # Validate file exists
         if not Path(file_path).exists():
@@ -99,31 +108,29 @@ async def parse_pdf_purchase_order(file_path: str, store_in_db: bool = True) -> 
                 error=f"File not found: {file_path}"
             )
         
-        # TODO: Implement actual PDF parsing
-        # po_data = await pdf_parser.parse_pdf(file_path)
-        
-        # Placeholder response based on sample data
-        po_data = create_sample_po_data()
+        # Parse the PDF
+        document_data = await pdf_parser.parse_document(file_path)
         
         response = ParsePDFResponse(
             success=True,
-            po_number=po_data.po_number,
-            vendor=po_data.vendor,
-            date=po_data.date.isoformat() if po_data.date else None,
-            total_amount=float(po_data.total_amount) if po_data.total_amount else None,
-            line_items_count=len(po_data.line_items),
-            extraction_confidence=po_data.extraction_confidence,
-            extraction_method=po_data.extraction_method
+            document_number=document_data.document_number,
+            document_type=document_data.document_type.value,
+            vendor=document_data.vendor,
+            date=document_data.date.isoformat() if document_data.date else None,
+            total_amount=float(document_data.total_amount) if hasattr(document_data, 'total_amount') and document_data.total_amount else None,
+            line_items_count=len(document_data.line_items) if document_data.line_items else 0,
+            extraction_confidence=document_data.extraction_confidence,
+            extraction_method=document_data.extraction_method
         )
         
         # Store in database if requested
         if store_in_db:
             try:
-                database_id = await store_po_in_database(po_data, file_path)
+                database_id = store_parsed_document(document_data, file_path)
                 response.database_id = database_id
-                logger.info(f"Stored PO in database with ID: {database_id}")
+                logger.info(f"Stored document in database with ID: {database_id}")
             except Exception as e:
-                logger.error(f"Error storing PO in database: {e}")
+                logger.error(f"Error storing document in database: {e}")
                 response.error = f"Parsing successful but database storage failed: {str(e)}"
         
         return response
@@ -137,63 +144,36 @@ async def parse_pdf_purchase_order(file_path: str, store_in_db: bool = True) -> 
 
 
 @mcp.tool()
-async def search_purchase_orders(query: str, limit: int = 20, include_line_items: bool = False) -> SearchPOResponse:
+async def search_documents(query: str, limit: int = 20, include_line_items: bool = False) -> SearchDocumentsResponse:
     """
-    Search purchase orders by PO number, vendor, or other criteria.
+    Search documents by document number, vendor, or other criteria.
     
     Args:
-        query: Search query (PO number, vendor name, etc.)
+        query: Search query (document number, vendor name, etc.)
         limit: Maximum number of results to return
         include_line_items: Whether to include line item details
     
     Returns:
-        SearchPOResponse with matching purchase orders
+        SearchDocumentsResponse with matching documents
     """
     try:
-        logger.info(f"Searching purchase orders: {query}")
+        logger.info(f"Searching documents: {query}")
         
-        # TODO: Implement actual database search
-        # with get_db_session() as db:
-        #     search_results = search_purchase_orders(db, query, limit)
+        search_results = search_business_documents(
+            query=query,
+            limit=limit,
+            include_line_items=include_line_items
+        )
         
-        # Placeholder search results
-        search_results = []
-        if query.lower() in ["po-1003", "nova plastics", "polycarbonate"]:
-            search_results = [
-                {
-                    "id": 1,
-                    "po_number": "PO-1003",
-                    "vendor": "Nova Plastics",
-                    "date": "2024-10-08",
-                    "total_amount": 77890.00,
-                    "line_items_count": 1,
-                    "extraction_confidence": 1.0,
-                    "pdf_filename": "sample_po.pdf"
-                }
-            ]
-        
-        # Add line items if requested
-        if include_line_items and search_results:
-            for result in search_results:
-                # TODO: Fetch actual line items from database
-                result["line_items"] = [
-                    {
-                        "item_description": "Polycarbonate Sheet",
-                        "quantity": 200,
-                        "unit_price": 389.45,
-                        "line_total": 77890.00
-                    }
-                ]
-        
-        return SearchPOResponse(
+        return SearchDocumentsResponse(
             success=True,
             results=search_results,
             total_count=len(search_results)
         )
         
     except Exception as e:
-        logger.error(f"Error searching purchase orders: {e}")
-        return SearchPOResponse(
+        logger.error(f"Error searching documents: {e}")
+        return SearchDocumentsResponse(
             success=False,
             results=[],
             total_count=0,
@@ -202,61 +182,35 @@ async def search_purchase_orders(query: str, limit: int = 20, include_line_items
 
 
 @mcp.tool()
-async def get_purchase_order_by_id(po_id: int, include_line_items: bool = True) -> Dict[str, Any]:
+async def get_document_details(document_id: int, include_line_items: bool = True) -> Dict[str, Any]:
     """
-    Get a specific purchase order by database ID.
+    Get a specific document by database ID.
     
     Args:
-        po_id: Database ID of the purchase order
+        document_id: Database ID of the document
         include_line_items: Whether to include line item details
     
     Returns:
-        Dictionary with purchase order details
+        Dictionary with document details
     """
     try:
-        logger.info(f"Getting purchase order by ID: {po_id}")
+        logger.info(f"Getting document by ID: {document_id}")
         
-        # TODO: Implement actual database lookup
-        # with get_db_session() as db:
-        #     po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+        document = db_get_document_by_id(document_id, include_line_items=include_line_items)
         
-        # Placeholder response
-        if po_id == 1:
-            po_data = {
+        if document:
+            return {
                 "success": True,
-                "id": 1,
-                "po_number": "PO-1003",
-                "vendor": "Nova Plastics",
-                "date": "2024-10-08",
-                "total_amount": 77890.00,
-                "pdf_filename": "sample_po.pdf",
-                "extraction_confidence": 1.0,
-                "extraction_method": "sample_data",
-                "status": "extracted",
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
+                **document
             }
-            
-            if include_line_items:
-                po_data["line_items"] = [
-                    {
-                        "id": 1,
-                        "item_description": "Polycarbonate Sheet",
-                        "quantity": 200,
-                        "unit_price": 389.45,
-                        "line_total": 77890.00
-                    }
-                ]
-            
-            return po_data
         else:
             return {
                 "success": False,
-                "error": f"Purchase order not found with ID: {po_id}"
+                "error": f"Document not found with ID: {document_id}"
             }
         
     except Exception as e:
-        logger.error(f"Error getting purchase order {po_id}: {e}")
+        logger.error(f"Error getting document {document_id}: {e}")
         return {
             "success": False,
             "error": str(e)
@@ -264,100 +218,82 @@ async def get_purchase_order_by_id(po_id: int, include_line_items: bool = True) 
 
 
 @mcp.tool()
-async def get_purchase_order_summary() -> POSummaryResponse:
+async def get_document_summary() -> DocumentSummaryResponse:
     """
-    Get summary statistics for all purchase orders.
+    Get summary statistics for all documents.
     
     Returns:
-        POSummaryResponse with summary statistics
+        DocumentSummaryResponse with summary statistics
     """
     try:
-        logger.info("Getting purchase order summary")
+        logger.info("Getting document summary")
         
-        # TODO: Implement actual database statistics
-        # with get_db_session() as db:
-        #     stats = get_database_statistics(db)
+        summary = get_database_summary()
         
-        # Placeholder statistics
-        return POSummaryResponse(
+        return DocumentSummaryResponse(
             success=True,
-            total_pos=1,
-            total_value=77890.00,
-            unique_vendors=1,
-            date_range={
-                "earliest": "2024-10-08",
-                "latest": "2024-10-08"
-            },
-            top_vendors=[
-                {
-                    "name": "Nova Plastics",
-                    "total_orders": 1,
-                    "total_amount": 77890.00
-                }
-            ]
+            total_documents=summary['total_documents'],
+            document_counts=summary['document_counts'],
+            total_value=summary['total_value'],
+            unique_vendors=summary['unique_vendors'],
+            date_range=summary['date_range'],
+            top_vendors=summary['top_vendors']
         )
         
     except Exception as e:
-        logger.error(f"Error getting purchase order summary: {e}")
-        return POSummaryResponse(
+        logger.error(f"Error getting document summary: {e}")
+        return DocumentSummaryResponse(
             success=False,
             error=str(e)
         )
 
 
 @mcp.tool()
-async def list_purchase_orders(offset: int = 0, limit: int = 20, vendor: Optional[str] = None) -> Dict[str, Any]:
+async def list_documents(offset: int = 0, limit: int = 20, vendor: Optional[str] = None, document_type: Optional[str] = None) -> Dict[str, Any]:
     """
-    List purchase orders with pagination and optional filtering.
+    List documents with pagination and optional filtering.
     
     Args:
         offset: Number of records to skip
         limit: Maximum number of records to return
         vendor: Optional vendor name filter
+        document_type: Optional document type filter
     
     Returns:
-        Dictionary with purchase order list and pagination info
+        Dictionary with document list and pagination info
     """
     try:
-        logger.info(f"Listing purchase orders (offset: {offset}, limit: {limit}, vendor: {vendor})")
+        logger.info(f"Listing documents (offset: {offset}, limit: {limit}, vendor: {vendor}, type: {document_type})")
         
-        # TODO: Implement actual database query with pagination
-        # with get_db_session() as db:
-        #     query = db.query(PurchaseOrder)
-        #     if vendor:
-        #         query = query.filter(PurchaseOrder.vendor.ilike(f"%{vendor}%"))
-        #     
-        #     total_count = query.count()
-        #     pos = query.offset(offset).limit(limit).all()
-        
-        # Placeholder response
-        pos = []
-        if vendor is None or vendor.lower() in "nova plastics":
-            pos = [
-                {
-                    "id": 1,
-                    "po_number": "PO-1003",
-                    "vendor": "Nova Plastics",
-                    "date": "2024-10-08",
-                    "total_amount": 77890.00,
-                    "line_items_count": 1,
-                    "pdf_filename": "sample_po.pdf",
-                    "status": "extracted",
-                    "created_at": datetime.now().isoformat()
+        # Convert document_type string to enum if provided
+        doc_type_enum = None
+        if document_type:
+            try:
+                doc_type_enum = DocumentType(document_type)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid document type: {document_type}"
                 }
-            ]
+        
+        result = list_business_documents(
+            limit=limit,
+            offset=offset,
+            vendor=vendor,
+            document_type=doc_type_enum
+        )
         
         return {
             "success": True,
-            "purchase_orders": pos,
-            "total_count": len(pos),
+            "documents": result["documents"],
+            "total_count": result["total_count"],
             "offset": offset,
             "limit": limit,
-            "has_more": False
+            "has_more": result["has_more"]
         }
         
     except Exception as e:
-        logger.error(f"Error listing purchase orders: {e}")
+        logger.error(f"Error listing documents: {e}")
         return {
             "success": False,
             "error": str(e)
@@ -367,7 +303,7 @@ async def list_purchase_orders(offset: int = 0, limit: int = 20, vendor: Optiona
 @mcp.tool()
 async def validate_pdf_format(file_path: str) -> Dict[str, Any]:
     """
-    Validate if a PDF file appears to contain purchase order data.
+    Validate if a PDF file appears to contain business document data.
     
     Args:
         file_path: Path to the PDF file to validate
@@ -385,11 +321,10 @@ async def validate_pdf_format(file_path: str) -> Dict[str, Any]:
                 "error": f"File not found: {file_path}"
             }
         
-        # TODO: Implement actual PDF validation
-        # pdf_info = await pdf_parser.get_pdf_info(file_path)
-        # is_valid_po = validate_sample_data_format(pdf_info.get("text_preview", ""))
+        # Use PDF parser to check if it's supported
+        is_supported = pdf_parser.is_supported(file_path)
         
-        # Placeholder validation
+        # Get basic file info
         file_info = {
             "file_size": Path(file_path).stat().st_size,
             "file_name": Path(file_path).name,
@@ -400,9 +335,10 @@ async def validate_pdf_format(file_path: str) -> Dict[str, Any]:
         return {
             "success": True,
             "is_valid_pdf": file_info["is_pdf"],
-            "appears_to_be_po": file_info["is_pdf"],  # Placeholder
+            "is_supported": is_supported,
+            "appears_to_be_business_doc": is_supported and file_info["is_pdf"],
             "file_info": file_info,
-            "validation_confidence": 0.8 if file_info["is_pdf"] else 0.0
+            "validation_confidence": 0.9 if is_supported else 0.1
         }
         
     except Exception as e:
@@ -413,94 +349,146 @@ async def validate_pdf_format(file_path: str) -> Dict[str, Any]:
         }
 
 
-# Helper functions
-async def store_po_in_database(po_data, file_path: str) -> int:
-    """Store purchase order data in database"""
+@mcp.tool()
+async def search_by_document_number(document_number: str, exact_match: bool = False) -> Dict[str, Any]:
+    """
+    Search for a document by its document number.
+    
+    Args:
+        document_number: Document number to search for
+        exact_match: Whether to do exact match or partial match
+    
+    Returns:
+        Dictionary with document details or error
+    """
     try:
-        # TODO: Implement actual database storage
-        # with get_db_session() as db:
-        #     # Create PO record
-        #     po_create = PurchaseOrderCreate(
-        #         po_number=po_data.po_number,
-        #         vendor=po_data.vendor,
-        #         date=po_data.date,
-        #         total_amount=po_data.total_amount,
-        #         pdf_filename=Path(file_path).name,
-        #         pdf_path=file_path,
-        #         parsing_confidence=po_data.extraction_confidence,
-        #         extraction_method=po_data.extraction_method,
-        #         raw_text=po_data.raw_text,
-        #         extraction_metadata=po_data.metadata
-        #     )
-        #     
-        #     po = PurchaseOrder(**po_create.dict())
-        #     db.add(po)
-        #     db.flush()
-        #     
-        #     # Create line items
-        #     for item_data in po_data.line_items:
-        #         item_create = PurchaseOrderItemCreate(
-        #             **item_data,
-        #             purchase_order_id=po.id
-        #         )
-        #         item = PurchaseOrderItem(**item_create.dict())
-        #         db.add(item)
-        #     
-        #     db.commit()
-        #     return po.id
+        logger.info(f"Searching by document number: {document_number}")
         
-        # Placeholder implementation
-        return 1
+        document = db_search_by_document_number(document_number, exact_match=exact_match)
+        
+        if document:
+            return {
+                "success": True,
+                **document
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Document not found with number: {document_number}"
+            }
         
     except Exception as e:
-        logger.error(f"Error storing PO in database: {e}")
-        raise
+        logger.error(f"Error searching by document number: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
-def create_sample_po_data():
-    """Create sample PO data for testing"""
-    from datetime import datetime
-    from decimal import Decimal
+@mcp.tool()
+async def search_by_vendor(vendor_name: str, limit: int = 20) -> Dict[str, Any]:
+    """
+    Search for documents by vendor name.
     
-    # Create a simple object with the sample data
-    class SamplePOData:
-        def __init__(self):
-            self.po_number = "PO-1003"
-            self.vendor = "Nova Plastics"
-            self.date = datetime(2024, 10, 8)
-            self.total_amount = Decimal("77890.00")
-            self.line_items = [
-                {
-                    "item_description": "Polycarbonate Sheet",
-                    "quantity": 200,
-                    "unit_price": Decimal("389.45"),
-                    "line_total": Decimal("77890.00")
-                }
-            ]
-            self.extraction_confidence = 1.0
-            self.extraction_method = "sample_data"
-            self.raw_text = "Sample PO data"
-            self.metadata = {"source": "sample"}
+    Args:
+        vendor_name: Vendor name to search for
+        limit: Maximum number of results
     
-    return SamplePOData()
+    Returns:
+        Dictionary with search results
+    """
+    try:
+        logger.info(f"Searching by vendor: {vendor_name}")
+        
+        documents = db_search_by_vendor(vendor_name, limit=limit)
+        
+        return {
+            "success": True,
+            "documents": documents,
+            "total_count": len(documents)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error searching by vendor: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
-async def main():
+@mcp.tool()
+async def get_purchase_orders(limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+    """
+    Get purchase orders with their details.
+    
+    Args:
+        limit: Maximum number of results
+        offset: Number of results to skip
+    
+    Returns:
+        Dictionary with purchase order list
+    """
+    try:
+        logger.info(f"Getting purchase orders (limit: {limit}, offset: {offset})")
+        
+        purchase_orders = db_get_purchase_orders(limit=limit, offset=offset)
+        
+        return {
+            "success": True,
+            "purchase_orders": purchase_orders,
+            "total_count": len(purchase_orders)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting purchase orders: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@mcp.tool()
+async def initialize_database_tables() -> Dict[str, Any]:
+    """
+    Initialize the database with all required tables.
+    
+    Returns:
+        Dictionary with initialization results
+    """
+    try:
+        logger.info("Initializing database tables")
+        
+        db_path = initialize_database()
+        db_info = get_database_info(db_path)
+        
+        return {
+            "success": True,
+            "database_path": db_path,
+            "database_info": db_info
+        }
+        
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+def main():
     """Main function to run the MCP server"""
     try:
-        # TODO: Initialize database
-        # await init_database()
+        logger.info("Starting Business Document PDF Parser MCP Server...")
         
-        logger.info("Starting Purchase Order PDF Parser MCP Server...")
+        # Initialize database if needed
+        try:
+            initialize_database()
+            logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.warning(f"Database initialization warning: {e}")
         
-        # Create sample data directory
-        sample_dir = Path("sample_data")
-        sample_dir.mkdir(exist_ok=True)
-        
-        # TODO: Add any additional initialization
-        
-        # Run the server
-        await mcp.run()
+        # Run the server - Note: FastMCP.run() is synchronous, not async
+        mcp.run()
         
     except Exception as e:
         logger.error(f"Error starting server: {e}")
@@ -508,4 +496,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    main() 
