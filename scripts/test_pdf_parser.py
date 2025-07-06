@@ -2,9 +2,9 @@
 ## call parse_pdf with a sample pdf file
 ## print the result
 
-from src.pdf_parser.parser import PurchaseOrderPDFParser
+from src.pdf_parser.parser import BusinessDocumentPDFParser
 import asyncio
 
-parser = PurchaseOrderPDFParser()
-result = asyncio.run(parser.parse_pdf("PO-1003_Nova_Plastics.pdf"))
+parser = BusinessDocumentPDFParser()
+result = asyncio.run(parser.parse_document("PO-1003_Nova_Plastics.pdf"))
 print(result)
