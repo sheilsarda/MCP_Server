@@ -1,0 +1,25 @@
+PURCHASE ORDER
+
+PO Number: PO-1003
+Vendor: Nova Plastics
+Item: Polycarbonate Sheet
+Quantity: 200
+Unit Price: $389.45
+Total: $77,890.00
+Date: 2024-10-08
+
+---
+
+This is a sample purchase order document that demonstrates the expected format
+for PDF parsing. The parser will extract the following structured data:
+
+- PO Number: A unique identifier for the purchase order
+- Vendor: The supplier/vendor name
+- Item: Description of the item being purchased
+- Quantity: Number of items
+- Unit Price: Price per item
+- Total: Total amount for the line item
+- Date: Purchase order date
+
+The PDF parser is designed to handle variations in formatting while extracting
+these key fields reliably. 
