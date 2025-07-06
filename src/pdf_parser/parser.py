@@ -1,26 +1,35 @@
 """
-PDF Parser for Purchase Order Documents
+PDF Parser for Business Documents (Purchase Orders, Invoices, Receipts)
 
-Extracts structured purchase order data from PDF documents using multiple parsing strategies.
+Extracts structured data from PDF documents using multiple parsing strategies.
 """
 
 import re
 import PyPDF2
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from decimal import Decimal
 from datetime import datetime
 from dataclasses import dataclass
+from enum import Enum
 
 # TODO: Import PDF parsing libraries (uncomment when packages are installed)
 # import fitz  # PyMuPDF
 # import pdfplumber
 # from dateutil.parser import parse as parse_date
 
+class DocumentType(Enum):
+    """Enumeration of supported document types"""
+    PURCHASE_ORDER = "purchase_order"
+    INVOICE = "invoice"
+    RECEIPT = "receipt"
+    UNKNOWN = "unknown"
+
 @dataclass
-class PurchaseOrderData:
-    """Structured purchase order data extracted from PDF"""
-    po_number: Optional[str] = None
+class DocumentData:
+    """Base class for structured document data extracted from PDF"""
+    document_type: DocumentType = DocumentType.UNKNOWN
+    document_number: Optional[str] = None
     vendor: Optional[str] = None
     date: Optional[datetime] = None
     total_amount: Optional[Decimal] = None
@@ -36,54 +45,160 @@ class PurchaseOrderData:
         if self.metadata is None:
             self.metadata = {}
 
+@dataclass
+class PurchaseOrderData(DocumentData):
+    """Purchase Order specific data"""
+    po_number: Optional[str] = None
+    
+    def __post_init__(self):
+        super().__post_init__()
+        self.document_type = DocumentType.PURCHASE_ORDER
+        # Map po_number to document_number for consistency
+        if self.po_number:
+            self.document_number = self.po_number
 
-class PurchaseOrderPDFParser:
+@dataclass
+class InvoiceData(DocumentData):
+    """Invoice specific data"""
+    invoice_number: Optional[str] = None
+    reference_po: Optional[str] = None
+    
+    def __post_init__(self):
+        super().__post_init__()
+        self.document_type = DocumentType.INVOICE
+        # Map invoice_number to document_number for consistency
+        if self.invoice_number:
+            self.document_number = self.invoice_number
+
+@dataclass
+class ReceiptData(DocumentData):
+    """Receipt specific data"""
+    receipt_id: Optional[str] = None
+    reference_po: Optional[str] = None
+    date_received: Optional[datetime] = None
+    quantity_received: Optional[int] = None
+    
+    def __post_init__(self):
+        super().__post_init__()
+        self.document_type = DocumentType.RECEIPT
+        # Map receipt_id to document_number for consistency
+        if self.receipt_id:
+            self.document_number = self.receipt_id
+
+
+class BusinessDocumentPDFParser:
     """
-    PDF parser optimized for purchase order documents
+    PDF parser for business documents (Purchase Orders, Invoices, Receipts)
     """
     
     def __init__(self):
         self.supported_extensions = ['.pdf']
         
-        # Regex patterns for extracting PO data
-        self.po_patterns = {
+        # Document type detection patterns
+        self.document_type_patterns = {
+            DocumentType.PURCHASE_ORDER: [
+                r'Purchase\s+Order',
+                r'PO\s+Number',
+                r'P\.O\.\s+Number'
+            ],
+            DocumentType.INVOICE: [
+                r'Invoice',
+                r'Invoice\s+Number',
+                r'INV[-\s]?\d+'
+            ],
+            DocumentType.RECEIPT: [
+                r'Receipt',
+                r'Delivery\s+Receipt',
+                r'Receipt\s+ID',
+                r'RCPT[-\s]?\d+'
+            ]
+        }
+        
+        # Regex patterns for extracting document data
+        self.extraction_patterns = {
+            # Purchase Order patterns
             'po_number': [
                 r'PO[-\s]?Number:?\s*([A-Z0-9-]+)',
                 r'Purchase\s+Order:?\s*([A-Z0-9-]+)',
                 r'P\.O\.?\s*:?\s*([A-Z0-9-]+)',
                 r'Order\s+Number:?\s*([A-Z0-9-]+)',
-                r'([A-Z]{2,4}[-]?\d{3,6})'  # Generic pattern
+                r'(PO[-]?\d{3,6})'  # Generic PO pattern
             ],
+            
+            # Invoice patterns
+            'invoice_number': [
+                r'Invoice[-\s]?Number:?\s*([A-Z0-9-]+)',
+                r'Invoice:?\s*([A-Z0-9-]+)',
+                r'INV[-\s]?Number:?\s*([A-Z0-9-]+)',
+                r'(INV[-]?\d{3,6})'  # Generic INV pattern
+            ],
+            
+            # Receipt patterns
+            'receipt_id': [
+                r'Receipt[-\s]?ID:?\s*([A-Z0-9-]+)',
+                r'Receipt:?\s*([A-Z0-9-]+)',
+                r'RCPT[-\s]?ID:?\s*([A-Z0-9-]+)',
+                r'(RCPT[-]?\d{3,6})'  # Generic RCPT pattern
+            ],
+            
+            # Common patterns
             'vendor': [
                 r'Vendor:?\s*([A-Za-z\s&.,\'-]+?)(?:\n|$)',
                 r'Supplier:?\s*([A-Za-z\s&.,\'-]+?)(?:\n|$)',
                 r'Company:?\s*([A-Za-z\s&.,\'-]+?)(?:\n|$)',
                 r'Bill\s+To:?\s*([A-Za-z\s&.,\'-]+?)(?:\n|$)'
             ],
+            
             'date': [
                 r'Date:?\s*(\d{4}-\d{2}-\d{2})',
                 r'Date:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
                 r'Order\s+Date:?\s*(\d{4}-\d{2}-\d{2})',
                 r'Order\s+Date:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                r'Invoice\s+Date:?\s*(\d{4}-\d{2}-\d{2})',
+                r'Invoice\s+Date:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
                 r'(\d{4}-\d{2}-\d{2})'  # Generic ISO date
             ],
+            
+            'date_received': [
+                r'Date\s+Received:?\s*(\d{4}-\d{2}-\d{2})',
+                r'Date\s+Received:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+                r'Received:?\s*(\d{4}-\d{2}-\d{2})',
+                r'Received:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+            ],
+            
+            'reference_po': [
+                r'Reference\s+PO:?\s*([A-Z0-9-]+)',
+                r'PO\s+Reference:?\s*([A-Z0-9-]+)',
+                r'Original\s+PO:?\s*([A-Z0-9-]+)',
+                r'Ref\.?\s+PO:?\s*([A-Z0-9-]+)'
+            ],
+            
             'total': [
                 r'Total:?\s*\$?([0-9,]+\.?\d{0,2})',
                 r'Grand\s+Total:?\s*\$?([0-9,]+\.?\d{0,2})',
                 r'Amount:?\s*\$?([0-9,]+\.?\d{0,2})',
                 r'Sum:?\s*\$?([0-9,]+\.?\d{0,2})'
             ],
+            
             'item': [
                 r'Item:?\s*([A-Za-z\s\-&.,]+)',
                 r'Description:?\s*([A-Za-z\s\-&.,]+)',
                 r'Product:?\s*([A-Za-z\s\-&.,]+)'
             ],
+            
             'quantity': [
                 r'Quantity:?\s*(\d+)',
                 r'Qty:?\s*(\d+)',
                 r'Amount:?\s*(\d+)\s*(?:EA|Each|Units?)',
                 r'(\d+)\s*(?:EA|Each|Units?)'
             ],
+            
+            'quantity_received': [
+                r'Quantity\s+Received:?\s*(\d+)',
+                r'Qty\s+Received:?\s*(\d+)',
+                r'Received:?\s*(\d+)\s*(?:EA|Each|Units?)'
+            ],
+            
             'unit_price': [
                 r'Unit\s+Price:?\s*\$?([0-9,]+\.?\d{0,2})',
                 r'Price:?\s*\$?([0-9,]+\.?\d{0,2})',
@@ -91,62 +206,138 @@ class PurchaseOrderPDFParser:
             ]
         }
     
-    async def parse_pdf(self, file_path: str) -> PurchaseOrderData:
+    async def parse_document(self, file_path: str) -> Union[PurchaseOrderData, InvoiceData, ReceiptData, DocumentData]:
         """
-        Parse a PDF file and extract purchase order data
+        Parse a PDF document and extract structured data
         
         Args:
             file_path: Path to the PDF file
             
         Returns:
-            PurchaseOrderData object with extracted information
+            DocumentData object with extracted information (specific subtype based on document type)
         """
         try:
-            print(f"INFO: Parsing PDF: {file_path}")
+            print(f"INFO: Parsing document: {file_path}")
             
             # Validate file
             if not self._validate_pdf(file_path):
                 raise ValueError(f"Invalid PDF file: {file_path}")
             
-            # Try multiple extraction methods
-            extraction_results = []
+            # Extract raw text
+            raw_text = await self._extract_text_with_pypdf2(file_path)
             
-            # Method 1: PyPDF2 (basic text extraction)
-            try:
-                result = await self._extract_with_pypdf2(file_path)
-                extraction_results.append(result)
-            except Exception as e:
-                print(f"WARNING: PyPDF2 extraction failed: {e}")
+            # Detect document type
+            document_type = self._detect_document_type(raw_text)
+            print(f"INFO: Detected document type: {document_type.value}")
             
-            # Method 2: PDFPlumber (advanced text extraction)
-            try:
-                result = await self._extract_with_pdfplumber(file_path)
-                extraction_results.append(result)
-            except Exception as e:
-                print(f"WARNING: PDFPlumber extraction failed: {e}")
+            # Extract structured data based on document type
+            if document_type == DocumentType.PURCHASE_ORDER:
+                result = self._extract_purchase_order_data(raw_text)
+            elif document_type == DocumentType.INVOICE:
+                result = self._extract_invoice_data(raw_text)
+            elif document_type == DocumentType.RECEIPT:
+                result = self._extract_receipt_data(raw_text)
+            else:
+                # Default to generic document data
+                result = self._extract_generic_document_data(raw_text)
             
-            # Method 3: PyMuPDF (fallback)
-            try:
-                result = await self._extract_with_pymupdf(file_path)
-                extraction_results.append(result)
-            except Exception as e:
-                print(f"WARNING: PyMuPDF extraction failed: {e}")
-            
-            # Select best result
-            if not extraction_results:
-                raise ValueError("All extraction methods failed")
-            
-            best_result = max(extraction_results, key=lambda x: x.extraction_confidence)
+            result.extraction_method = "pypdf2"
+            result.raw_text = raw_text
             
             # Post-process and validate
-            validated_result = self._validate_and_clean_data(best_result)
+            validated_result = self._validate_and_clean_data(result)
             
-            print(f"INFO: PDF parsing completed. Confidence: {validated_result.extraction_confidence:.2f}")
+            print(f"INFO: Document parsing completed. Confidence: {validated_result.extraction_confidence:.2f}")
             return validated_result
             
         except Exception as e:
-            print(f"ERROR: Error parsing PDF {file_path}: {e}")
+            print(f"ERROR: Error parsing document {file_path}: {e}")
             raise
+    
+    def _detect_document_type(self, text: str) -> DocumentType:
+        """Detect the type of document based on text content"""
+        text_upper = text.upper()
+        
+        # Check for each document type
+        for doc_type, patterns in self.document_type_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, text_upper, re.IGNORECASE):
+                    return doc_type
+        
+        return DocumentType.UNKNOWN
+    
+    def _extract_purchase_order_data(self, text: str) -> PurchaseOrderData:
+        """Extract purchase order specific data"""
+        po_data = PurchaseOrderData()
+        
+        # Extract PO-specific fields
+        po_data.po_number = self._extract_field(text, 'po_number')
+        po_data.vendor = self._extract_field(text, 'vendor')
+        po_data.date = self._parse_date_field(text, 'date')
+        po_data.total_amount = self._parse_currency_field(text, 'total')
+        po_data.line_items = self._extract_line_items(text)
+        
+        # Set document_number for consistency
+        if po_data.po_number:
+            po_data.document_number = po_data.po_number
+        
+        po_data.extraction_confidence = self._calculate_confidence(po_data)
+        
+        return po_data
+    
+    def _extract_invoice_data(self, text: str) -> InvoiceData:
+        """Extract invoice specific data"""
+        invoice_data = InvoiceData()
+        
+        # Extract invoice-specific fields
+        invoice_data.invoice_number = self._extract_field(text, 'invoice_number')
+        invoice_data.reference_po = self._extract_field(text, 'reference_po')
+        invoice_data.vendor = self._extract_field(text, 'vendor')
+        invoice_data.date = self._parse_date_field(text, 'date')
+        invoice_data.total_amount = self._parse_currency_field(text, 'total')
+        invoice_data.line_items = self._extract_line_items(text)
+        
+        # Set document_number for consistency
+        if invoice_data.invoice_number:
+            invoice_data.document_number = invoice_data.invoice_number
+        
+        invoice_data.extraction_confidence = self._calculate_confidence(invoice_data)
+        
+        return invoice_data
+    
+    def _extract_receipt_data(self, text: str) -> ReceiptData:
+        """Extract receipt specific data"""
+        receipt_data = ReceiptData()
+        
+        # Extract receipt-specific fields
+        receipt_data.receipt_id = self._extract_field(text, 'receipt_id')
+        receipt_data.reference_po = self._extract_field(text, 'reference_po')
+        receipt_data.vendor = self._extract_field(text, 'vendor')
+        receipt_data.date = self._parse_date_field(text, 'date')
+        receipt_data.date_received = self._parse_date_field(text, 'date_received')
+        receipt_data.quantity_received = self._parse_int_field(text, 'quantity_received')
+        receipt_data.line_items = self._extract_line_items(text)
+        
+        # Set document_number for consistency
+        if receipt_data.receipt_id:
+            receipt_data.document_number = receipt_data.receipt_id
+        
+        receipt_data.extraction_confidence = self._calculate_confidence(receipt_data)
+        
+        return receipt_data
+    
+    def _extract_generic_document_data(self, text: str) -> DocumentData:
+        """Extract generic document data when type is unknown"""
+        doc_data = DocumentData()
+        
+        # Extract common fields
+        doc_data.vendor = self._extract_field(text, 'vendor')
+        doc_data.date = self._parse_date_field(text, 'date')
+        doc_data.total_amount = self._parse_currency_field(text, 'total')
+        doc_data.line_items = self._extract_line_items(text)
+        doc_data.extraction_confidence = self._calculate_confidence(doc_data)
+        
+        return doc_data
     
     def _validate_pdf(self, file_path: str) -> bool:
         """Validate if file is a readable PDF"""
@@ -169,116 +360,22 @@ class PurchaseOrderPDFParser:
             print(f"ERROR: PDF validation failed: {e}")
             return False
     
-    async def _extract_with_pypdf2(self, file_path: str) -> PurchaseOrderData:
-        """Extract data using PyPDF2"""
+    async def _extract_text_with_pypdf2(self, file_path: str) -> str:
+        """Extract text using PyPDF2"""
         try:
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
                 text = ""
                 for page in pdf_reader.pages:
                     text += page.extract_text()
-                
-                po_data = self._extract_structured_data(text)
-                po_data.extraction_method = "pypdf2"
-                po_data.raw_text = text
-                return po_data
+                return text
         except Exception as e:
             print(f"ERROR: PyPDF2 extraction failed: {e}")
-            raise
-        
-        # Placeholder implementation
-        # po_data = PurchaseOrderData()
-        # po_data.extraction_method = "pypdf2_placeholder"
-        # po_data.extraction_confidence = 0.3
-        # po_data.raw_text = "TODO: Implement PyPDF2 extraction"
-        # return po_data
-    
-    async def _extract_with_pdfplumber(self, file_path: str) -> PurchaseOrderData:
-        """Extract data using pdfplumber"""
-        # TODO: Implement pdfplumber extraction
-        # try:
-        #     with pdfplumber.open(file_path) as pdf:
-        #         text = ""
-        #         for page in pdf.pages:
-        #             text += page.extract_text() or ""
-        #         
-        #         po_data = self._extract_structured_data(text)
-        #         po_data.extraction_method = "pdfplumber"
-        #         po_data.raw_text = text
-        #         return po_data
-        # except Exception as e:
-        #     print(f"ERROR: pdfplumber extraction failed: {e}")
-        #     raise
-        
-        # Placeholder implementation
-        po_data = PurchaseOrderData()
-        po_data.extraction_method = "pdfplumber_placeholder"
-        po_data.extraction_confidence = 0.5
-        po_data.raw_text = "TODO: Implement pdfplumber extraction"
-        return po_data
-    
-    async def _extract_with_pymupdf(self, file_path: str) -> PurchaseOrderData:
-        """Extract data using PyMuPDF"""
-        # TODO: Implement PyMuPDF extraction
-        # try:
-        #     doc = fitz.open(file_path)
-        #     text = ""
-        #     for page in doc:
-        #         text += page.get_text()
-        #     doc.close()
-        #     
-        #     po_data = self._extract_structured_data(text)
-        #     po_data.extraction_method = "pymupdf"
-        #     po_data.raw_text = text
-        #     return po_data
-        # except Exception as e:
-        #     print(f"ERROR: PyMuPDF extraction failed: {e}")
-        #     raise
-        
-        # Placeholder implementation
-        po_data = PurchaseOrderData()
-        po_data.extraction_method = "pymupdf_placeholder"
-        po_data.extraction_confidence = 0.4
-        po_data.raw_text = "TODO: Implement PyMuPDF extraction"
-        return po_data
-    
-    def _extract_structured_data(self, text: str) -> PurchaseOrderData:
-        """Extract structured data from raw text using regex patterns"""
-        try:
-            po_data = PurchaseOrderData()
-            po_data.raw_text = text
-            
-            # Extract PO number
-            po_data.po_number = self._extract_field(text, 'po_number')
-            
-            # Extract vendor
-            po_data.vendor = self._extract_field(text, 'vendor')
-            
-            # Extract date
-            date_str = self._extract_field(text, 'date')
-            if date_str:
-                po_data.date = self._parse_date(date_str)
-            
-            # Extract total amount
-            total_str = self._extract_field(text, 'total')
-            if total_str:
-                po_data.total_amount = self._parse_currency(total_str)
-            
-            # Extract line items
-            po_data.line_items = self._extract_line_items(text)
-            
-            # Calculate confidence score
-            po_data.extraction_confidence = self._calculate_confidence(po_data)
-            
-            return po_data
-            
-        except Exception as e:
-            print(f"ERROR: Error extracting structured data: {e}")
             raise
     
     def _extract_field(self, text: str, field_name: str) -> Optional[str]:
         """Extract a specific field using regex patterns"""
-        patterns = self.po_patterns.get(field_name, [])
+        patterns = self.extraction_patterns.get(field_name, [])
         
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
@@ -288,6 +385,31 @@ class PurchaseOrderPDFParser:
                 return result
         
         print(f"DEBUG: Could not extract {field_name}")
+        return None
+    
+    def _parse_date_field(self, text: str, field_name: str) -> Optional[datetime]:
+        """Parse date field from text"""
+        date_str = self._extract_field(text, field_name)
+        if date_str:
+            return self._parse_date(date_str)
+        return None
+    
+    def _parse_currency_field(self, text: str, field_name: str) -> Optional[Decimal]:
+        """Parse currency field from text"""
+        currency_str = self._extract_field(text, field_name)
+        if currency_str:
+            return self._parse_currency(currency_str)
+        return None
+    
+    def _parse_int_field(self, text: str, field_name: str) -> Optional[int]:
+        """Parse integer field from text"""
+        int_str = self._extract_field(text, field_name)
+        if int_str:
+            try:
+                return int(int_str)
+            except ValueError:
+                print(f"ERROR: Error parsing integer '{int_str}' for field {field_name}")
+                return None
         return None
     
     def _extract_line_items(self, text: str) -> List[Dict[str, Any]]:
@@ -359,68 +481,76 @@ class PurchaseOrderPDFParser:
             print(f"ERROR: Error parsing date '{date_str}': {e}")
             return None
     
-    def _calculate_confidence(self, po_data: PurchaseOrderData) -> float:
+    def _calculate_confidence(self, doc_data: DocumentData) -> float:
         """Calculate extraction confidence score"""
         confidence_factors = []
         
         # Required fields
-        if po_data.po_number:
+        if doc_data.document_number:
             confidence_factors.append(0.3)
-        if po_data.vendor:
+        if doc_data.vendor:
             confidence_factors.append(0.2)
-        if po_data.date:
+        if doc_data.date:
             confidence_factors.append(0.1)
-        if po_data.total_amount:
+        if doc_data.total_amount:
             confidence_factors.append(0.2)
         
         # Line items
-        if po_data.line_items:
+        if doc_data.line_items:
             confidence_factors.append(0.2)
+        
+        # Document type specific bonuses
+        if isinstance(doc_data, PurchaseOrderData) and doc_data.po_number:
+            confidence_factors.append(0.1)
+        elif isinstance(doc_data, InvoiceData) and doc_data.invoice_number:
+            confidence_factors.append(0.1)
+        elif isinstance(doc_data, ReceiptData) and doc_data.receipt_id:
+            confidence_factors.append(0.1)
         
         # Calculate total confidence
         total_confidence = sum(confidence_factors)
         
         # Bonus for complete data
-        if len(confidence_factors) == 5:
+        if len(confidence_factors) >= 5:
             total_confidence += 0.1
         
         return min(total_confidence, 1.0)
     
-    def _validate_and_clean_data(self, po_data: PurchaseOrderData) -> PurchaseOrderData:
+    def _validate_and_clean_data(self, doc_data: DocumentData) -> DocumentData:
         """Validate and clean extracted data"""
         try:
             # Clean vendor name
-            if po_data.vendor:
-                po_data.vendor = self._clean_vendor_name(po_data.vendor)
+            if doc_data.vendor:
+                doc_data.vendor = self._clean_vendor_name(doc_data.vendor)
             
-            # Validate PO number format
-            if po_data.po_number:
-                po_data.po_number = self._clean_po_number(po_data.po_number)
+            # Validate document number format
+            if doc_data.document_number:
+                doc_data.document_number = self._clean_document_number(doc_data.document_number)
             
             # Validate date range
-            if po_data.date:
-                if po_data.date.year < 2000 or po_data.date.year > 2030:
-                    print(f"WARNING: Date seems invalid: {po_data.date}")
-                    po_data.date = None
+            if doc_data.date:
+                if doc_data.date.year < 2000 or doc_data.date.year > 2030:
+                    print(f"WARNING: Date seems invalid: {doc_data.date}")
+                    doc_data.date = None
             
             # Validate amounts
-            if po_data.total_amount and po_data.total_amount <= 0:
-                print(f"WARNING: Total amount seems invalid: {po_data.total_amount}")
-                po_data.total_amount = None
+            if doc_data.total_amount and doc_data.total_amount <= 0:
+                print(f"WARNING: Total amount seems invalid: {doc_data.total_amount}")
+                doc_data.total_amount = None
             
             # Validate line items
-            if po_data.line_items:
-                for item in po_data.line_items:
+            if doc_data.line_items:
+                for item in doc_data.line_items:
                     if item.get('quantity', 0) <= 0:
                         print(f"WARNING: Invalid quantity in line item: {item}")
                     if item.get('unit_price', 0) <= 0:
                         print(f"WARNING: Invalid unit price in line item: {item}")
             
-            return po_data
+            return doc_data
             
         except Exception as e:
             print(f"ERROR: Error validating data: {e}")
-            return po_data
+            return doc_data
     
     def _clean_vendor_name(self, vendor: str) -> str:
         """Clean and normalize vendor name"""
@@ -437,26 +567,26 @@ class PurchaseOrderPDFParser:
         
         return vendor
     
-    def _clean_po_number(self, po_number: str) -> str:
-        """Clean and normalize PO number"""
+    def _clean_document_number(self, doc_number: str) -> str:
+        """Clean and normalize document number"""
         # Remove extra whitespace
-        po_number = po_number.strip()
+        doc_number = doc_number.strip()
         
         # Ensure consistent format
-        po_number = po_number.upper()
+        doc_number = doc_number.upper()
         
-        # TODO: Add more PO number cleaning
-        # - Standardize PO number format
+        # TODO: Add more document number cleaning
+        # - Standardize document number format
         # - Add check digits validation
         
-        return po_number
+        return doc_number
     
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported"""
         return Path(file_path).suffix.lower() in self.supported_extensions
     
-    async def get_pdf_info(self, file_path: str) -> Dict[str, Any]:
-        """Get basic PDF information"""
+    async def get_document_info(self, file_path: str) -> Dict[str, Any]:
+        """Get basic document information"""
         try:
             file_path_obj = Path(file_path)
             
@@ -468,16 +598,16 @@ class PurchaseOrderPDFParser:
                 "modified_date": file_path_obj.stat().st_mtime,
                 "page_count": 0,  # TODO: Get actual page count
                 "is_encrypted": False,  # TODO: Check if PDF is encrypted
-                "parser_version": "1.0.0"
+                "parser_version": "2.0.0"
             }
             
         except Exception as e:
-            print(f"ERROR: Error getting PDF info: {e}")
+            print(f"ERROR: Error getting document info: {e}")
             return {}
 
 
 # Utility functions for testing with sample data
-def create_sample_po_data() -> PurchaseOrderData:
+def create_sample_purchase_order_data() -> PurchaseOrderData:
     """Create sample PO data for testing"""
     return PurchaseOrderData(
         po_number="PO-1003",
@@ -499,12 +629,106 @@ def create_sample_po_data() -> PurchaseOrderData:
     )
 
 
+def create_sample_invoice_data() -> InvoiceData:
+    """Create sample invoice data for testing"""
+    return InvoiceData(
+        invoice_number="INV-8893",
+        reference_po="PO-1003",
+        vendor="Nova Plastics",
+        date=datetime(2024, 10, 14),
+        total_amount=Decimal("77890.00"),
+        line_items=[
+            {
+                "item_description": "Polycarbonate Sheet",
+                "quantity": 200,
+                "unit_price": Decimal("389.45"),
+                "line_total": Decimal("77890.00"),
+                "extraction_confidence": 1.0
+            }
+        ],
+        extraction_confidence=1.0,
+        extraction_method="sample_data",
+        raw_text="Sample invoice data for testing"
+    )
+
+
+def create_sample_receipt_data() -> ReceiptData:
+    """Create sample receipt data for testing"""
+    return ReceiptData(
+        receipt_id="RCPT-7123",
+        reference_po="PO-1003",
+        vendor="Nova Plastics",
+        date_received=datetime(2024, 10, 15),
+        quantity_received=200,
+        line_items=[
+            {
+                "item_description": "Polycarbonate Sheet",
+                "quantity": 200,
+                "extraction_confidence": 1.0
+            }
+        ],
+        extraction_confidence=1.0,
+        extraction_method="sample_data",
+        raw_text="Sample receipt data for testing"
+    )
+
+
 def validate_sample_data_format(text: str) -> bool:
-    """Validate if text matches the sample PO format"""
-    required_fields = ["PO Number:", "Vendor:", "Item:", "Quantity:", "Unit Price:", "Total:", "Date:"]
+    """Validate if text matches expected document format"""
+    # Common required fields across all document types
+    common_fields = ["Vendor:", "Item:"]
+    
+    # Check for document type specific fields
+    if "Purchase Order" in text:
+        required_fields = common_fields + ["PO Number:", "Quantity:", "Unit Price:", "Total:", "Date:"]
+    elif "Invoice" in text:
+        required_fields = common_fields + ["Invoice Number:", "Reference PO:", "Quantity:", "Unit Price:", "Total:", "Date:"]
+    elif "Receipt" in text:
+        required_fields = common_fields + ["Receipt ID:", "Reference PO:", "Quantity Received:", "Date Received:"]
+    else:
+        return False
     
     for field in required_fields:
         if field not in text:
             return False
     
-    return True 
+    return True
+
+
+# Legacy function names for backward compatibility
+# These are now deprecated and should be replaced with the new general-purpose functions
+class PurchaseOrderPDFParser(BusinessDocumentPDFParser):
+    """Legacy class name for backward compatibility"""
+    
+    async def parse_pdf(self, file_path: str) -> PurchaseOrderData:
+        """Legacy method name for backward compatibility"""
+        print("WARNING: parse_pdf() is deprecated. Use parse_document() instead.")
+        result = await self.parse_document(file_path)
+        
+        # Convert to PurchaseOrderData if it's not already
+        if isinstance(result, PurchaseOrderData):
+            return result
+        else:
+            # Convert generic DocumentData to PurchaseOrderData
+            po_data = PurchaseOrderData()
+            po_data.po_number = result.document_number
+            po_data.vendor = result.vendor
+            po_data.date = result.date
+            po_data.total_amount = result.total_amount
+            po_data.line_items = result.line_items
+            po_data.extraction_confidence = result.extraction_confidence
+            po_data.extraction_method = result.extraction_method
+            po_data.raw_text = result.raw_text
+            po_data.metadata = result.metadata
+            return po_data
+    
+    async def get_pdf_info(self, file_path: str) -> Dict[str, Any]:
+        """Legacy method name for backward compatibility"""
+        print("WARNING: get_pdf_info() is deprecated. Use get_document_info() instead.")
+        return await self.get_document_info(file_path)
+
+
+def create_sample_po_data() -> PurchaseOrderData:
+    """Legacy function name for backward compatibility"""
+    print("WARNING: create_sample_po_data() is deprecated. Use create_sample_purchase_order_data() instead.")
+    return create_sample_purchase_order_data() 
