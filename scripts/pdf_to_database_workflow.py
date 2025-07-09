@@ -63,6 +63,8 @@ from decimal import Decimal
 # AUDIT: Path manipulation indicates poor package structure - should use proper packaging
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+# Import centralized configuration
+from config import DATABASE_URL
 from pdf_parser.parser import BusinessDocumentPDFParser, PurchaseOrderData, InvoiceData, ReceiptData
 from database.setup import initialize_database, get_database_info
 from database.connection import DatabaseSession, get_session
@@ -76,10 +78,19 @@ class PDFProcessingWorkflow:
     """Main workflow class for processing PDFs and storing data"""
     
     def __init__(self, db_path: str = None):
-        self.db_path = db_path or os.path.join(os.getcwd(), 'business_documents.db')
+        # Use centralized database configuration instead of hardcoded SQLite path
+        # This now supports both cloud databases (Supabase/PostgreSQL) and SQLite
+        self.db_path = db_path  # Keep for backward compatibility, but don't default to SQLite
         self.parser = BusinessDocumentPDFParser()
         self.processed_documents = []
         self.errors = []
+        
+        # Log which database we're using
+        if db_path:
+            print(f"📊 Using provided database path: {db_path}")
+        else:
+            db_url = DATABASE_URL or "default configuration"
+            print(f"📊 Using configured database: {db_url[:50]}...")
     
     def convert_document_type(self, parser_doc_type):
         """Convert parser DocumentType to database DocumentType"""
