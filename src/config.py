@@ -16,6 +16,11 @@ Centralized configuration using environment variables with sensible defaults.
 import os
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # TODO: Add proper configuration validation with Pydantic
 # from pydantic import BaseSettings, validator
 # from enum import Enum

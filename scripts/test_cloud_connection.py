@@ -29,7 +29,8 @@ def test_connection():
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            result = conn.execute("SELECT 1 as test")
+            from sqlalchemy import text
+            result = conn.execute(text("SELECT 1 as test"))
             print(f"✅ Connection successful: {result.fetchone()}")
         return True
     except Exception as e:
