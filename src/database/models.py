@@ -10,9 +10,9 @@ from decimal import Decimal
 from enum import Enum
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, Numeric, ForeignKey, Boolean, JSON, Enum as SQLEnum
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import json
 
 Base = declarative_base()
@@ -385,7 +385,8 @@ class PurchaseOrderCreate(BaseModel):
     po_number: str = Field(..., max_length=50)
     total_amount: Optional[Decimal] = Field(None, ge=0)
     
-    @validator('total_amount')
+    @field_validator('total_amount')
+    @classmethod
     def validate_total_amount(cls, v):
         if v is not None and v <= 0:
             raise ValueError('Total amount must be positive')
@@ -422,10 +423,11 @@ class DocumentLineItemCreate(BaseModel):
     line_number: Optional[int] = None
     extraction_confidence: Optional[Decimal] = Field(None, ge=0, le=1)
     
-    @validator('line_total')
-    def validate_line_total(cls, v, values):
-        if 'quantity' in values and 'unit_price' in values:
-            expected_total = values['quantity'] * values['unit_price']
+    @field_validator('line_total')
+    @classmethod  
+    def validate_line_total(cls, v, info):
+        if info.data and 'quantity' in info.data and 'unit_price' in info.data:
+            expected_total = info.data['quantity'] * info.data['unit_price']
             if abs(v - expected_total) > Decimal('0.01'):  # Allow for small rounding differences
                 raise ValueError('Line total does not match quantity × unit price')
         return v

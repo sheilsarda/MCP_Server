@@ -1,9 +1,12 @@
 {
   "mcpServers": {
     "business-document-parser": {
-      "command": "python3",
+      "command": "/usr/bin/python3",
       "args": ["-m", "src.mcp_server.server"],
-      "cwd": "/home/sheil/MCP_Server"
+      "cwd": "/home/sheil/MCP_Server",
+      "env": {
+        "PYTHONPATH": "/home/sheil/MCP_Server"
+      }
     }
   }
 } 

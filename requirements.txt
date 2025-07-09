@@ -1,5 +1,5 @@
 # FastMCP - The MCP server framework
-fastmcp>=0.1.0
+fastmcp>=0.1.0,<2.0.0
 
 # Database dependencies
 sqlalchemy>=2.0.0
