@@ -3,6 +3,52 @@
 PDF to Database Workflow Script
 
 Complete workflow for processing PDF documents and storing extracted data in SQLite database.
+
+# COMPREHENSIVE AUDIT FEEDBACK - WORKFLOW SCRIPT ISSUES:
+
+## MAJOR ARCHITECTURAL PROBLEMS:
+# 1. **MONOLITHIC SCRIPT**: Single class handles parsing, database, validation, reporting
+# 2. **POOR ERROR RECOVERY**: Single file failure stops entire batch processing  
+# 3. **NO TRANSACTION MANAGEMENT**: Partial failures leave database in inconsistent state
+# 4. **TIGHT COUPLING**: Direct imports create circular dependencies with database/parser
+# 5. **MISSING SEPARATION**: Business logic mixed with I/O and presentation concerns
+
+## CRITICAL BUGS & RELIABILITY ISSUES:
+# 1. **TYPE MAPPING HACK**: convert_document_type() indicates poor enum design
+# 2. **ENUM IMPORT CONFLICT**: Importing both parser and models DocumentType enums
+# 3. **SILENT FAILURES**: Errors logged but processing continues with corrupted state
+# 4. **RESOURCE LEAKS**: Database sessions not properly managed in error cases
+# 5. **DUPLICATE PROCESSING**: No check for already processed files
+
+## SECURITY & VALIDATION CONCERNS:
+# 1. **DIRECTORY TRAVERSAL**: No validation of pdf_directory parameter
+# 2. **ARBITRARY FILE PROCESSING**: Processes any .pdf file without validation
+# 3. **SQL INJECTION POTENTIAL**: Manual SQL operations without proper parameterization
+# 4. **RESOURCE EXHAUSTION**: No limits on batch size or processing time
+# 5. **FILE SYSTEM ACCESS**: Unrestricted access to file system via Path operations
+
+## CODE QUALITY VIOLATIONS:
+# 1. **HARDCODED VALUES**: Magic numbers and paths scattered throughout
+# 2. **INCONSISTENT ERROR HANDLING**: Mix of exceptions, logging, and return codes
+# 3. **POOR LOGGING**: Print statements mixed with proper logging
+# 4. **DUPLICATE CODE**: Repeated patterns for document type handling
+# 5. **MISSING TYPE HINTS**: Many functions lack proper type annotations
+# 6. **COMPLEX METHODS**: store_document_data() method too long and complex
+
+## PERFORMANCE & SCALABILITY ISSUES:
+# 1. **SERIAL PROCESSING**: Files processed one by one instead of parallel
+# 2. **BLOCKING OPERATIONS**: Async methods that do blocking database I/O
+# 3. **MEMORY INEFFICIENCY**: Entire document data kept in memory during processing
+# 4. **NO PROGRESS TRACKING**: No indication of progress for large batches
+# 5. **DATABASE THRASHING**: Individual transactions instead of batching
+
+## RECOMMENDED FIXES:
+# 1. Split into separate service classes (FileProcessor, DocumentService, ReportService)
+# 2. Add proper transaction management with rollback capabilities
+# 3. Implement parallel processing with proper resource limits  
+# 4. Add comprehensive validation pipeline for security
+# 5. Create proper error recovery and retry mechanisms
+# 6. Add progress tracking and monitoring capabilities
 """
 
 import os
@@ -14,6 +60,7 @@ from datetime import datetime
 from decimal import Decimal
 
 # Add src directory to path for imports
+# AUDIT: Path manipulation indicates poor package structure - should use proper packaging
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from pdf_parser.parser import BusinessDocumentPDFParser, PurchaseOrderData, InvoiceData, ReceiptData
@@ -75,7 +122,7 @@ class PDFProcessingWorkflow:
                 print(f"\n🔍 Processing: {file_path.name}")
                 
                 # Parse the PDF
-                document_data = await self.parser.parse_document(str(file_path))
+                document_data = self.parser.parse_document(str(file_path))
                 
                 # Store in database
                 stored_document = await self.store_document_data(document_data, str(file_path))

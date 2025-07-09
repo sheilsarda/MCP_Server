@@ -1,5 +1,54 @@
 # Business Document PDF Parser
 
+**⚠️ AUDIT FINDINGS - CRITICAL ISSUES IDENTIFIED ⚠️**
+
+This repository has been audited and contains several critical issues that need to be addressed before production use:
+
+## 🚨 Critical Security Issues
+- **Path Injection Vulnerabilities**: File path parameters not validated
+- **SQL Injection Risks**: Search queries not properly parameterized  
+- **Resource Exhaustion**: No limits on file size or processing time
+- **Error Information Leakage**: Stack traces expose internal architecture
+- **No Authentication**: All endpoints publicly accessible
+
+## 🏗️ Major Architectural Problems
+- **Monolithic Design**: Single files handle multiple responsibilities
+- **Enum Duplication**: DocumentType defined in multiple places causing conflicts
+- **Fake Async**: Functions marked async but do blocking I/O
+- **Tight Coupling**: Direct imports create circular dependency risks
+- **Poor Separation of Concerns**: Business logic mixed with API/database code
+
+## 🐛 Critical Bugs
+- **Database Inconsistencies**: Nullable fields that should be required
+- **Type Conversion Issues**: Unsafe Decimal/float conversions
+- **Silent Failures**: Many operations fail without proper error reporting
+- **Resource Leaks**: Database sessions not properly managed
+- **Mutable Default Arguments**: Shared state bugs in dataclasses
+
+## 📈 Performance & Scalability Issues  
+- **Blocking Operations**: File I/O blocks the event loop
+- **N+1 Queries**: Inefficient database relationship loading
+- **Memory Inefficiency**: Large files loaded entirely into memory
+- **No Caching**: Repeated database queries for same data
+- **Serial Processing**: No parallel file processing
+
+## 🧹 Code Quality Violations
+- **Code Duplication**: Massive duplication between Invoice/Receipt models
+- **Dead Code**: Commented imports and TODO comments everywhere
+- **Inconsistent Error Handling**: Mix of exceptions, None returns, error dicts
+- **Magic Numbers**: Hardcoded values scattered throughout
+- **Poor Logging**: Print statements mixed with proper logging
+
+## 🔧 Recommended Fixes (Priority Order)
+1. **Fix Security Issues**: Add input validation, authentication, rate limiting
+2. **Refactor Architecture**: Split into proper service layers, fix enum duplication
+3. **Implement Proper Async**: Use thread pools for I/O, fix blocking operations
+4. **Add Error Handling**: Comprehensive error boundaries and logging
+5. **Improve Data Models**: Fix nullable issues, add validation, remove duplication
+6. **Performance Optimization**: Add caching, connection pooling, parallel processing
+
+---
+
 A FastMCP-based server for parsing business PDF documents (purchase orders, invoices, and receipts) and storing them in a searchable SQLite database. This project provides automated extraction of structured data from various business document types.
 
 ## Current Status

@@ -2,6 +2,47 @@
 FastMCP Server for Business Document PDF Parser
 
 This server provides MCP tools for parsing PDF documents and managing them in a database.
+
+# COMPREHENSIVE AUDIT FEEDBACK - CRITICAL ARCHITECTURAL ISSUES:
+
+## MAJOR ARCHITECTURAL PROBLEMS:
+# 1. **MONOLITHIC DESIGN**: Single file handles server, parsing, database, serialization - violates SRP
+# 2. **TIGHT COUPLING**: Direct database imports create circular dependency potential
+# 3. **MISSING SERVICE LAYER**: Business logic mixed with API endpoints
+# 4. **NO DEPENDENCY INJECTION**: Hard-coded dependencies make testing impossible
+# 5. **ASYNC MISUSE**: Many "async" functions don't actually do async work
+# 6. **NO ERROR BOUNDARIES**: Single failure can crash entire server
+
+## CRITICAL BUGS & SECURITY ISSUES:
+# 1. **PATH INJECTION**: file_path parameter not validated - arbitrary file system access
+# 2. **RESOURCE EXHAUSTION**: No limits on PDF file size or processing time
+# 3. **DATABASE INJECTION**: Search queries not properly parameterized
+# 4. **MEMORY LEAKS**: Large PDF files loaded into memory without cleanup
+# 5. **ERROR INFORMATION LEAKAGE**: Stack traces expose internal architecture
+# 6. **NO AUTHENTICATION**: All endpoints publicly accessible
+
+## CODE QUALITY VIOLATIONS:
+# 1. **INCONSISTENT ERROR HANDLING**: Mix of exceptions, None returns, and error dicts
+# 2. **DUPLICATE CODE**: Repeated try/catch blocks and logging patterns
+# 3. **POOR LOGGING**: Logs go to stderr instead of proper logging framework
+# 4. **MAGIC NUMBERS**: Hard-coded limits (20, etc.) scattered throughout
+# 5. **INCONSISTENT RETURN TYPES**: Some functions return dicts, others Pydantic models
+# 6. **MISSING TYPE VALIDATION**: Input parameters not validated against schemas
+
+## PERFORMANCE CONCERNS:
+# 1. **BLOCKING OPERATIONS**: File I/O and PDF parsing block the event loop
+# 2. **NO CACHING**: Repeated database queries for same data
+# 3. **INEFFICIENT SERIALIZATION**: Manual dict conversion instead of Pydantic
+# 4. **NO PAGINATION**: Database queries could return unlimited results
+# 5. **RESOURCE MANAGEMENT**: No connection pooling or resource limits
+
+## RECOMMENDED ARCHITECTURAL FIXES:
+# 1. Split into separate modules: routers/, services/, schemas/
+# 2. Add proper dependency injection container
+# 3. Implement service layer with business logic separation
+# 4. Add comprehensive input validation and security middleware
+# 5. Implement proper async patterns with background task processing
+# 6. Add monitoring, metrics, and proper error handling
 """
 
 import asyncio
@@ -13,6 +54,7 @@ from decimal import Decimal
 from datetime import datetime
 
 # Add the project root to the Python path to ensure imports work
+# AUDIT: This path manipulation is brittle and indicates poor package structure
 project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -22,10 +64,12 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 # Configure loguru to use stderr instead of stdout for MCP compatibility
+# AUDIT: Custom logging configuration should be in separate module
 logger.remove()  # Remove default handler
 logger.add(sys.stderr, format="{time} - {name} - {level} - {message}")
 
 # Import database and parsing modules using absolute imports
+# CIRCULAR DEPENDENCY RISK: These imports create tight coupling
 from src.database.queries import (
     search_business_documents, get_document_by_id as db_get_document_by_id, 
     list_business_documents, get_database_summary, 
@@ -38,6 +82,7 @@ from src.database.models import DocumentType
 from src.pdf_parser.parser import BusinessDocumentPDFParser
 
 # Configure logging to stderr to avoid interfering with MCP JSON-RPC on stdout
+# DUPLICATE: This duplicates loguru config above
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -46,20 +91,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
+# AUDIT: No configuration or error handling for server initialization
 mcp = FastMCP("Business Document PDF Parser")
 
 # Initialize PDF parser
+# GLOBAL STATE: Parser should be injected, not global
 pdf_parser = BusinessDocumentPDFParser()
 
 
 class ParsePDFRequest(BaseModel):
-    """Request model for PDF parsing"""
+    """Request model for PDF parsing
+    
+    # VALIDATION MISSING: No file path validation, size limits, or format checks
+    """
     file_path: str = Field(..., description="Path to the PDF file to parse")
     store_in_db: bool = Field(default=True, description="Whether to store the parsed data in database")
 
 
 class ParsePDFResponse(BaseModel):
-    """Response model for PDF parsing"""
+    """Response model for PDF parsing
+    
+    # AUDIT ISSUES:
+    # 1. **INCONSISTENT OPTIONAL FIELDS**: Some fields Optional, others not - unclear contract
+    # 2. **TYPE CONFUSION**: extraction_confidence is float but could be Decimal
+    # 3. **ERROR HANDLING**: Single error field for all error types
+    """
     success: bool
     document_number: Optional[str] = None
     document_type: Optional[str] = None
@@ -74,14 +130,20 @@ class ParsePDFResponse(BaseModel):
 
 
 class SearchDocumentsRequest(BaseModel):
-    """Request model for searching documents"""
+    """Request model for searching documents
+    
+    # SECURITY ISSUE: No query validation - potential injection attacks
+    """
     query: str = Field(..., description="Search query")
     limit: int = Field(default=20, description="Maximum number of results")
     include_line_items: bool = Field(default=False, description="Whether to include line item details")
 
 
 class SearchDocumentsResponse(BaseModel):
-    """Response model for search results"""
+    """Response model for search results
+    
+    # AUDIT: No metadata about query performance, pagination, etc.
+    """
     success: bool
     results: List[Dict[str, Any]]
     total_count: int
@@ -111,11 +173,19 @@ async def parse_pdf_document(file_path: str, store_in_db: bool = True) -> ParseP
     
     Returns:
         ParsePDFResponse with parsed data and storage results
+        
+    # CRITICAL SECURITY ISSUES:
+    # 1. **PATH INJECTION**: No validation of file_path - could access any file
+    # 2. **RESOURCE EXHAUSTION**: No file size limits or processing timeouts  
+    # 3. **ERROR INFORMATION LEAKAGE**: Full exception details exposed to client
+    # 4. **NO RATE LIMITING**: Could be used for DoS attacks
     """
     try:
+        # SECURITY ISSUE: No path validation
         logger.info(f"Parsing PDF document: {file_path}")
         
         # Validate file exists
+        # INSUFFICIENT VALIDATION: Should check file extension, size, permissions
         if not Path(file_path).exists():
             return ParsePDFResponse(
                 success=False,
@@ -123,9 +193,11 @@ async def parse_pdf_document(file_path: str, store_in_db: bool = True) -> ParseP
             )
         
         # Parse the PDF
-        document_data = await pdf_parser.parse_document(file_path)
+        # Now properly synchronous operation
+        document_data = pdf_parser.parse_document(file_path)
         
         # Handle total_amount conversion safely
+        # AUDIT: This manual conversion indicates poor type design
         total_amount_val = getattr(document_data, 'total_amount', None)
         total_amount = float(total_amount_val) if total_amount_val is not None else None
         
@@ -144,16 +216,19 @@ async def parse_pdf_document(file_path: str, store_in_db: bool = True) -> ParseP
         # Store in database if requested
         if store_in_db:
             try:
+                # BLOCKING OPERATION: Database operations should be truly async
                 database_id = store_parsed_document(document_data, file_path)
                 response.database_id = database_id
                 logger.info(f"Stored document in database with ID: {database_id}")
             except Exception as e:
+                # ERROR LEAKAGE: Internal error details exposed
                 logger.error(f"Error storing document in database: {e}")
                 response.error = f"Parsing successful but database storage failed: {str(e)}"
         
         return response
         
     except Exception as e:
+        # SECURITY ISSUE: Full exception details exposed to client
         logger.error(f"Error parsing PDF {file_path}: {e}")
         return ParsePDFResponse(
             success=False,
@@ -173,10 +248,17 @@ async def search_documents(query: str, limit: int = 20, include_line_items: bool
     
     Returns:
         SearchDocumentsResponse with matching documents
+        
+    # CRITICAL SECURITY ISSUES:
+    # 1. **SQL INJECTION**: query parameter not properly validated/sanitized
+    # 2. **NO RATE LIMITING**: Could be used for database DoS
+    # 3. **RESOURCE EXHAUSTION**: No upper limit validation on limit parameter
     """
     try:
+        # SECURITY ISSUE: No input validation on query parameter
         logger.info(f"Searching documents: {query}")
         
+        # BLOCKING OPERATION: Database query should be truly async
         search_results = search_business_documents(
             query=query,
             limit=limit,
@@ -190,6 +272,7 @@ async def search_documents(query: str, limit: int = 20, include_line_items: bool
         )
         
     except Exception as e:
+        # ERROR LEAKAGE: Internal database errors exposed
         logger.error(f"Error searching documents: {e}")
         return SearchDocumentsResponse(
             success=False,

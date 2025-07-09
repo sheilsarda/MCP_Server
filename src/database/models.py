@@ -2,6 +2,48 @@
 Database models for Business Document PDF Parser
 
 Models designed to store structured data extracted from PDFs (Purchase Orders, Invoices, Receipts).
+
+# COMPREHENSIVE AUDIT FEEDBACK - CRITICAL ISSUES IDENTIFIED:
+
+## ARCHITECTURAL PROBLEMS:
+# 1. **VIOLATION OF DRY**: Massive code duplication between Invoice/Receipt models 
+# 2. **INCONSISTENT DESIGN**: BusinessDocument is generic but PO/Invoice/Receipt are separate tables
+# 3. **POOR NORMALIZATION**: Vendor data duplicated instead of proper FK relationship
+# 4. **OVER-ENGINEERING**: ExtractionTemplate table likely never used in practice
+# 5. **MIXED RESPONSIBILITIES**: Data models, validation, utility functions all mixed together
+
+## CRITICAL BUGS:
+# 1. **ENUM MISMATCH**: DocumentType enum duplicated in parser.py - will cause import conflicts
+# 2. **UNSAFE DECIMAL**: Currency calculations without proper precision controls
+# 3. **WEAK CONSTRAINTS**: No database-level constraints for required business rules
+# 4. **NULLABLE CONFUSION**: Core fields like document_number can be nullable
+
+## SECURITY & DATA INTEGRITY:
+# 1. **NO VALIDATION**: Raw text stored without size limits (potential DoS)
+# 2. **INJECTION RISK**: JSON metadata field accepts arbitrary data  
+# 3. **MISSING INDEXES**: Poor query performance on vendor/date searches
+# 4. **NO CASCADING**: Deleting documents leaves orphaned vendor stats
+
+## CODE QUALITY ISSUES:
+# 1. **BLOATED FILE**: 568 lines - should be split into multiple modules
+# 2. **INCONSISTENT NAMING**: mix of camelCase and snake_case
+# 3. **MISSING TYPE HINTS**: Many functions lack proper type annotations
+# 4. **POOR ERROR HANDLING**: Silent failures in utility functions
+# 5. **HARDCODED MAGIC NUMBERS**: Precision/scale values scattered throughout
+
+## PERFORMANCE CONCERNS:
+# 1. **N+1 QUERIES**: to_dict() methods will cause query multiplication
+# 2. **MISSING INDEXES**: Critical business queries will be slow
+# 3. **INEFFICIENT RELATIONSHIPS**: Eager loading not configured properly
+# 4. **NO PAGINATION**: Vendor statistics could grow unbounded
+
+## RECOMMENDED FIXES:
+# 1. Split into separate modules: models/, schemas/, utils/
+# 2. Create proper base classes and inheritance hierarchy  
+# 3. Add comprehensive database constraints and indexes
+# 4. Implement proper validation with Pydantic
+# 5. Add soft delete and audit trails
+# 6. Create proper service layer instead of mixing business logic in models
 """
 
 from datetime import datetime
@@ -18,9 +60,14 @@ Base = declarative_base()
 
 
 class DocumentType(str, Enum):
-    """Document types supported by the parser"""
+    """Document types supported by the parser
+    
+    # CRITICAL BUG: This enum is DUPLICATED in src/pdf_parser/parser.py
+    # This will cause import conflicts and version mismatches
+    # SOLUTION: Move to shared enums module or use single source of truth
+    """
     PURCHASE_ORDER = "purchase_order"
-    INVOICE = "invoice"
+    INVOICE = "invoice" 
     RECEIPT = "receipt"
     UNKNOWN = "unknown"
 
@@ -28,50 +75,70 @@ class DocumentType(str, Enum):
 class BusinessDocument(Base):
     """
     Base table for all business documents (POs, Invoices, Receipts)
+    
+    # AUDIT ISSUES:
+    # 1. **DESIGN FLAW**: Generic table for specific document types creates complexity
+    # 2. **NULLABLE CONFUSION**: document_number should NEVER be null for business docs
+    # 3. **MISSING CONSTRAINTS**: No unique constraint on (document_type, document_number)
+    # 4. **POOR INDEXING**: Missing composite indexes for common queries
+    # 5. **VALIDATION GAP**: No business rule validation at database level
     """
     __tablename__ = "business_documents"
     
     id = Column(Integer, primary_key=True, index=True)
     
     # Document identification
+    # IMPROVEMENT: Add unique constraint on (document_type, document_number)
     document_type = Column(SQLEnum(DocumentType), nullable=False, index=True)
     document_number = Column(String(50), nullable=False, index=True)  # PO number, Invoice number, Receipt ID
     
     # Common fields across all document types
+    # AUDIT: vendor should be FK to vendors table, not string duplication
     vendor = Column(String(255), nullable=False, index=True)
     date = Column(DateTime, nullable=False, index=True)
     
     # PDF source information
     pdf_filename = Column(String(255), nullable=False)
     pdf_path = Column(String(500), nullable=False)
+    # IMPROVEMENT: Add file size validation and constraints
     pdf_file_size = Column(Integer, nullable=True)
     pdf_pages = Column(Integer, nullable=True)
     
     # Parsing metadata
     extracted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # AUDIT: Should validate range 0.0-1.0 at database level
     parsing_confidence = Column(Numeric(precision=3, scale=2), nullable=True)  # 0.0 to 1.0
     extraction_method = Column(String(50), nullable=True)  # e.g., "pypdf", "ocr", "template"
     
     # Raw extracted data for debugging
+    # SECURITY RISK: No size limit on raw text - potential DoS attack vector
     raw_text = Column(Text, nullable=True)
+    # SECURITY RISK: Accepts arbitrary JSON - potential injection
     extraction_metadata = Column(JSON, nullable=True)
     
     # Status tracking
+    # IMPROVEMENT: Should use enum instead of string
     status = Column(String(20), default="extracted", nullable=False)  # extracted, validated, error
     validation_errors = Column(Text, nullable=True)
     
     # Timestamps
+    # IMPROVEMENT: Use timezone-aware timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relationships
+    # AUDIT: Cascade delete could be dangerous for business data
     line_items = relationship("DocumentLineItem", back_populates="document", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<BusinessDocument(type='{self.document_type}', number='{self.document_number}', vendor='{self.vendor}')>"
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert document to dictionary for API responses"""
+        """Convert document to dictionary for API responses
+        
+        # PERFORMANCE ISSUE: This will trigger N+1 queries if not properly loaded
+        # AUDIT: Should use serialization library instead of manual dict conversion
+        """
         return {
             "id": self.id,
             "document_type": self.document_type.value if self.document_type else None,
@@ -86,6 +153,7 @@ class BusinessDocument(Base):
             "parsing_confidence": float(self.parsing_confidence) if self.parsing_confidence else None,
             "extraction_method": self.extraction_method,
             "status": self.status,
+            # PERFORMANCE PROBLEM: len(self.line_items) will load ALL line items just to count
             "line_items_count": len(self.line_items) if self.line_items else 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
@@ -95,17 +163,27 @@ class BusinessDocument(Base):
 class PurchaseOrder(Base):
     """
     Purchase Order specific data
+    
+    # AUDIT ISSUES:
+    # 1. **REDUNDANCY**: po_number duplicates document_number from BusinessDocument
+    # 2. **WEAK RELATIONSHIP**: Should have CASCADE constraints properly configured
+    # 3. **VALIDATION MISSING**: No check that document_type matches PURCHASE_ORDER
+    # 4. **INCONSISTENT DESIGN**: Different pattern than Invoice/Receipt tables
     """
     __tablename__ = "purchase_orders"
     
     id = Column(Integer, primary_key=True, index=True)
+    # IMPROVEMENT: Add ON DELETE CASCADE and validation
     document_id = Column(Integer, ForeignKey("business_documents.id"), nullable=False, unique=True, index=True)
     
     # PO specific fields
+    # REDUNDANCY: This duplicates BusinessDocument.document_number
     po_number = Column(String(50), unique=True, nullable=False, index=True)
+    # AUDIT: No validation of positive amounts
     total_amount = Column(Numeric(precision=12, scale=2), nullable=True)
     
     # Timestamps
+    # REDUNDANCY: Already tracked in BusinessDocument
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -116,7 +194,10 @@ class PurchaseOrder(Base):
         return f"<PurchaseOrder(po_number='{self.po_number}', total=${self.total_amount})>"
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert PO to dictionary"""
+        """Convert PO to dictionary
+        
+        # AUDIT: Same serialization issues as BusinessDocument
+        """
         return {
             "id": self.id,
             "document_id": self.document_id,
@@ -130,6 +211,12 @@ class PurchaseOrder(Base):
 class Invoice(Base):
     """
     Invoice specific data
+    
+    # MAJOR DESIGN FLAW: This model violates normalization principles
+    # 1. **SINGLE ITEM LIMITATION**: Only supports one item per invoice (item_description, quantity, unit_price)
+    # 2. **REDUNDANT DATA**: Same timestamp tracking as BusinessDocument  
+    # 3. **INCONSISTENT**: Should use line_items relationship like POs
+    # 4. **POOR VALIDATION**: No business rule validation
     """
     __tablename__ = "invoices"
     
@@ -142,6 +229,7 @@ class Invoice(Base):
     total_amount = Column(Numeric(precision=12, scale=2), nullable=True)
     
     # Single line item fields (based on sample data structure)
+    # DESIGN FLAW: Should use proper line_items relationship instead
     item_description = Column(String(500), nullable=True)
     quantity = Column(Integer, nullable=True)
     unit_price = Column(Numeric(precision=10, scale=2), nullable=True)
@@ -175,6 +263,9 @@ class Invoice(Base):
 class Receipt(Base):
     """
     Receipt specific data
+    
+    # AUDIT: IDENTICAL ISSUES TO Invoice class - massive code duplication
+    # This entire class could be merged with Invoice or use common base class
     """
     __tablename__ = "receipts"
     
@@ -187,6 +278,7 @@ class Receipt(Base):
     date_received = Column(DateTime, nullable=True, index=True)
     
     # Single line item fields (based on sample data structure)
+    # SAME DESIGN FLAW: Should use line_items relationship
     item_description = Column(String(500), nullable=True)
     quantity_received = Column(Integer, nullable=True)
     
@@ -218,6 +310,12 @@ class Receipt(Base):
 class DocumentLineItem(Base):
     """
     Line items for documents that have multiple items
+    
+    # AUDIT ISSUES:
+    # 1. **VALIDATION MISSING**: No business rule validation (quantity > 0, etc.)
+    # 2. **CALCULATION ERROR**: line_total could be inconsistent with quantity * unit_price
+    # 3. **CURRENCY PRECISION**: Inconsistent precision settings across amount fields
+    # 4. **REDUNDANT EXTRACTION**: extraction_confidence duplicated from document level
     """
     __tablename__ = "document_line_items"
     
@@ -226,8 +324,10 @@ class DocumentLineItem(Base):
     
     # Line item details
     item_description = Column(String(500), nullable=False)
+    # VALIDATION MISSING: Should enforce quantity > 0
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(precision=10, scale=2), nullable=False)
+    # BUSINESS RULE VIOLATION: No validation that line_total = quantity * unit_price
     line_total = Column(Numeric(precision=10, scale=2), nullable=False)
     
     # Additional item information
