@@ -6,17 +6,27 @@ This server provides MCP tools for parsing PDF documents and managing them in a 
 
 import asyncio
 import logging
+import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
 from datetime import datetime
 
+# Add the project root to the Python path to ensure imports work
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from loguru import logger
 
-# Import database and parsing modules
-from ..database.queries import (
+# Configure loguru to use stderr instead of stdout for MCP compatibility
+logger.remove()  # Remove default handler
+logger.add(sys.stderr, format="{time} - {name} - {level} - {message}")
+
+# Import database and parsing modules using absolute imports
+from src.database.queries import (
     search_business_documents, get_document_by_id as db_get_document_by_id, 
     list_business_documents, get_database_summary, 
     search_by_document_number as db_search_by_document_number, 
@@ -24,11 +34,15 @@ from ..database.queries import (
     get_purchase_orders as db_get_purchase_orders, 
     store_parsed_document, initialize_database, get_database_info
 )
-from ..database.models import DocumentType
-from ..pdf_parser.parser import BusinessDocumentPDFParser
+from src.database.models import DocumentType
+from src.pdf_parser.parser import BusinessDocumentPDFParser
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging to stderr to avoid interfering with MCP JSON-RPC on stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stderr  # Ensure logs go to stderr, not stdout
+)
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
@@ -111,13 +125,17 @@ async def parse_pdf_document(file_path: str, store_in_db: bool = True) -> ParseP
         # Parse the PDF
         document_data = await pdf_parser.parse_document(file_path)
         
+        # Handle total_amount conversion safely
+        total_amount_val = getattr(document_data, 'total_amount', None)
+        total_amount = float(total_amount_val) if total_amount_val is not None else None
+        
         response = ParsePDFResponse(
             success=True,
             document_number=document_data.document_number,
             document_type=document_data.document_type.value,
             vendor=document_data.vendor,
             date=document_data.date.isoformat() if document_data.date else None,
-            total_amount=float(getattr(document_data, 'total_amount', None)) if getattr(document_data, 'total_amount', None) is not None else None,
+            total_amount=total_amount,
             line_items_count=len(document_data.line_items) if document_data.line_items else 0,
             extraction_confidence=document_data.extraction_confidence,
             extraction_method=document_data.extraction_method

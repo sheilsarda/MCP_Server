@@ -6,6 +6,7 @@ Creates SQLite database with all required tables.
 
 import os
 import sqlite3
+import sys
 from typing import Optional
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -38,9 +39,10 @@ def initialize_database(db_path: Optional[str] = None) -> str:
     
     # Create engine and tables
     database_url = f"sqlite:///{db_path}"
-    engine = create_engine(database_url, echo=True)
+    engine = create_engine(database_url, echo=False)
     
-    print(f"Creating database tables in: {db_path}")
+    # Don't print to stdout as it interferes with MCP JSON-RPC protocol
+    # print(f"Creating database tables in: {db_path}")
     
     # Create all tables
     Base.metadata.create_all(engine)
@@ -71,7 +73,7 @@ def initialize_database(db_path: Optional[str] = None) -> str:
         
         conn.commit()
     
-    print(f"Database initialized successfully at: {db_path}")
+    # print(f"Database initialized successfully at: {db_path}")
     return db_path
 
 
@@ -83,7 +85,7 @@ def reset_database(db_path: Optional[str] = None) -> None:
     database_url = f"sqlite:///{db_path}"
     engine = create_engine(database_url)
     
-    print(f"Resetting database: {db_path}")
+    # print(f"Resetting database: {db_path}")
     
     # Drop all tables
     Base.metadata.drop_all(engine)
@@ -94,7 +96,7 @@ def reset_database(db_path: Optional[str] = None) -> None:
 
 def seed_sample_data(db_path: Optional[str] = None) -> None:
     """Add sample data for testing - DISABLED by default to keep database empty for real data"""
-    print("Sample data seeding is disabled. Database will remain empty for real data only.")
+    # print("Sample data seeding is disabled. Database will remain empty for real data only.")
     return
 
 
@@ -138,6 +140,7 @@ if __name__ == "__main__":
     
     # Show database info
     info = get_database_info(db_path)
-    print("\nDatabase Information:")
-    for key, value in info.items():
-        print(f"  {key}: {value}") 
+    # Commented out to avoid interfering with MCP JSON-RPC protocol
+    # print("\nDatabase Information:")
+    # for key, value in info.items():
+    #     print(f"  {key}: {value}") 

@@ -6,12 +6,23 @@ Extracts structured data from PDF documents using multiple parsing strategies.
 
 import re
 import pypdf
+import logging
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 from decimal import Decimal
 from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
+
+# Configure logging to stderr to avoid interfering with MCP JSON-RPC
+logger = logging.getLogger(__name__)
+# Ensure logs go to stderr
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # TODO: Import PDF parsing libraries (uncomment when packages are installed)
 # import fitz  # PyMuPDF
@@ -224,7 +235,7 @@ class BusinessDocumentPDFParser:
             DocumentData object with extracted information (specific subtype based on document type)
         """
         try:
-            print(f"INFO: Parsing document: {file_path}")
+            logger.info(f"Parsing document: {file_path}")
             
             # Validate file
             if not self._validate_pdf(file_path):
@@ -235,7 +246,7 @@ class BusinessDocumentPDFParser:
             
             # Detect document type
             document_type = self._detect_document_type(raw_text)
-            print(f"INFO: Detected document type: {document_type.value}")
+            logger.info(f"Detected document type: {document_type.value}")
             
             # Extract structured data based on document type
             if document_type == DocumentType.PURCHASE_ORDER:
@@ -254,11 +265,11 @@ class BusinessDocumentPDFParser:
             # Post-process and validate
             validated_result = self._validate_and_clean_data(result)
             
-            print(f"INFO: Document parsing completed. Confidence: {validated_result.extraction_confidence:.2f}")
+            logger.info(f"Document parsing completed. Confidence: {validated_result.extraction_confidence:.2f}")
             return validated_result
             
         except Exception as e:
-            print(f"ERROR: Error parsing document {file_path}: {e}")
+            logger.error(f"Error parsing document {file_path}: {e}")
             raise
     
     def _detect_document_type(self, text: str) -> DocumentType:
@@ -363,7 +374,7 @@ class BusinessDocumentPDFParser:
             return True
             
         except Exception as e:
-            print(f"ERROR: PDF validation failed: {e}")
+            logger.error(f"PDF validation failed: {e}")
             return False
     
     async def _extract_text_with_pypdf(self, file_path: str) -> str:
@@ -376,7 +387,7 @@ class BusinessDocumentPDFParser:
                     text += page.extract_text()
                 return text
         except Exception as e:
-            print(f"ERROR: pypdf extraction failed: {e}")
+            logger.error(f"pypdf extraction failed: {e}")
             raise
     
     def _extract_field(self, text: str, field_name: str) -> Optional[str]:
@@ -387,10 +398,10 @@ class BusinessDocumentPDFParser:
             match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 result = match.group(1).strip()
-                print(f"DEBUG: Extracted {field_name}: {result}")
+                logger.debug(f"Extracted {field_name}: {result}")
                 return result
         
-        print(f"DEBUG: Could not extract {field_name}")
+        logger.debug(f"Could not extract {field_name}")
         return None
     
     def _parse_date_field(self, text: str, field_name: str) -> Optional[datetime]:
@@ -414,7 +425,7 @@ class BusinessDocumentPDFParser:
             try:
                 return int(int_str)
             except ValueError:
-                print(f"ERROR: Error parsing integer '{int_str}' for field {field_name}")
+                logger.error(f"Error parsing integer '{int_str}' for field {field_name}")
                 return None
         return None
     
@@ -455,7 +466,7 @@ class BusinessDocumentPDFParser:
             clean_str = re.sub(r'[$,]', '', amount_str.strip())
             return Decimal(clean_str)
         except Exception as e:
-            print(f"ERROR: Error parsing currency '{amount_str}': {e}")
+            logger.error(f"Error parsing currency '{amount_str}': {e}")
             return None
     
     def _parse_date(self, date_str: str) -> Optional[datetime]:
@@ -484,7 +495,7 @@ class BusinessDocumentPDFParser:
             return None
             
         except Exception as e:
-            print(f"ERROR: Error parsing date '{date_str}': {e}")
+            logger.error(f"Error parsing date '{date_str}': {e}")
             return None
     
     ## Note: this method is not great and should be removed; TODO: come up with a better metric of how well the parser did
@@ -540,27 +551,27 @@ class BusinessDocumentPDFParser:
             # Validate date range
             if doc_data.date:
                 if doc_data.date.year < 2000 or doc_data.date.year > 2030:
-                    print(f"WARNING: Date seems invalid: {doc_data.date}")
+                    logger.warning(f"Date seems invalid: {doc_data.date}")
                     doc_data.date = None
             
             # Validate amounts (only for documents that have this field)
             total_amount = getattr(doc_data, 'total_amount', None)
             if total_amount and total_amount <= 0:
-                print(f"WARNING: Total amount seems invalid: {total_amount}")
+                logger.warning(f"Total amount seems invalid: {total_amount}")
                 setattr(doc_data, 'total_amount', None)
             
             # Validate line items
             if doc_data.line_items:
                 for item in doc_data.line_items:
                     if item.get('quantity', 0) <= 0:
-                        print(f"WARNING: Invalid quantity in line item: {item}")
+                        logger.warning(f"Invalid quantity in line item: {item}")
                     if item.get('unit_price', 0) <= 0:
-                        print(f"WARNING: Invalid unit price in line item: {item}")
+                        logger.warning(f"Invalid unit price in line item: {item}")
             
             return doc_data
             
         except Exception as e:
-            print(f"ERROR: Error validating data: {e}")
+            logger.error(f"Error validating data: {e}")
             return doc_data
     
     def _clean_vendor_name(self, vendor: str) -> str:
@@ -613,5 +624,5 @@ class BusinessDocumentPDFParser:
             }
             
         except Exception as e:
-            print(f"ERROR: Error getting document info: {e}")
+            logger.error(f"Error getting document info: {e}")
             return {}
