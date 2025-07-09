@@ -10,6 +10,16 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from typing import Optional, Dict, Any
 
+# Import centralized configuration
+try:
+    from ..config import DATABASE_PATH
+except ImportError:
+    # Fallback for when running as script
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from config import DATABASE_PATH
+
 
 # Global variables for database connection
 _engine: Optional[Engine] = None
@@ -19,7 +29,7 @@ _session_factory: Optional[sessionmaker] = None
 def get_database_url(db_path: Optional[str] = None) -> str:
     """Get database URL for SQLAlchemy"""
     if db_path is None:
-        db_path = os.path.join(os.getcwd(), 'business_documents.db')
+        db_path = DATABASE_PATH  # Use centralized config instead of os.getcwd()
     
     # Ensure absolute path for SQLite
     db_path = os.path.abspath(db_path)
