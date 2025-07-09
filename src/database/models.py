@@ -51,7 +51,7 @@ class BusinessDocument(Base):
     # Parsing metadata
     extracted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     parsing_confidence = Column(Numeric(precision=3, scale=2), nullable=True)  # 0.0 to 1.0
-    extraction_method = Column(String(50), nullable=True)  # e.g., "pypdf2", "ocr", "template"
+    extraction_method = Column(String(50), nullable=True)  # e.g., "pypdf", "ocr", "template"
     
     # Raw extracted data for debugging
     raw_text = Column(Text, nullable=True)

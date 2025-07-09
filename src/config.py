@@ -203,9 +203,9 @@ class ParsingConfig:
     def parser_priority(self) -> List[str]:
         """Get parser priority order"""
         if self.settings.prefer_accuracy_over_speed:
-            return ["pdfplumber", "pymupdf", "pypdf2"]
+            return ["pdfplumber", "pymupdf", "pypdf"]
         else:
-            return ["pypdf2", "pdfplumber", "pymupdf"]
+            return ["pypdf", "pdfplumber", "pymupdf"]
 
 
 # Global settings instance

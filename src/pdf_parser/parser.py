@@ -5,7 +5,7 @@ Extracts structured data from PDF documents using multiple parsing strategies.
 """
 
 import re
-import PyPDF2
+import pypdf
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 from decimal import Decimal
@@ -231,7 +231,7 @@ class BusinessDocumentPDFParser:
                 raise ValueError(f"Invalid PDF file: {file_path}")
             
             # Extract raw text
-            raw_text = await self._extract_text_with_pypdf2(file_path)
+            raw_text = await self._extract_text_with_pypdf(file_path)
             
             # Detect document type
             document_type = self._detect_document_type(raw_text)
@@ -248,7 +248,7 @@ class BusinessDocumentPDFParser:
                 # Default to generic document data
                 result = self._extract_generic_document_data(raw_text)
             
-            result.extraction_method = "pypdf2"
+            result.extraction_method = "pypdf"
             result.raw_text = raw_text
             
             # Post-process and validate
@@ -366,17 +366,17 @@ class BusinessDocumentPDFParser:
             print(f"ERROR: PDF validation failed: {e}")
             return False
     
-    async def _extract_text_with_pypdf2(self, file_path: str) -> str:
-        """Extract text using PyPDF2"""
+    async def _extract_text_with_pypdf(self, file_path: str) -> str:
+        """Extract text using pypdf"""
         try:
             with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
+                pdf_reader = pypdf.PdfReader(file)
                 text = ""
                 for page in pdf_reader.pages:
                     text += page.extract_text()
                 return text
         except Exception as e:
-            print(f"ERROR: PyPDF2 extraction failed: {e}")
+            print(f"ERROR: pypdf extraction failed: {e}")
             raise
     
     def _extract_field(self, text: str, field_name: str) -> Optional[str]:

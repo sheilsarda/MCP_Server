@@ -17,7 +17,7 @@ A FastMCP-based server for parsing business PDF documents (purchase orders, invo
 - **Multi-Document Support**: Parse purchase orders, invoices, and receipts from PDF files
 - **Database Storage**: Store parsed documents in SQLite with comprehensive search capabilities
 - **MCP Tools**: 10 FastMCP tools for document parsing, searching, and management
-- **PDF Parser**: Robust PDF text extraction using PyPDF2 with fallback strategies
+- **PDF Parser**: Robust PDF text extraction using pypdf with fallback strategies
 - **Document Type Detection**: Automatic detection of document types based on content patterns
 - **Confidence Scoring**: Extraction confidence scoring for data quality assessment
 - **Batch Processing**: Scripts for processing multiple documents at once
@@ -212,7 +212,7 @@ Configuration is managed through environment variables and the `src/config.py` f
 ### Current Implementation Status
 
 **✅ Completed:**
-- PDF parsing with PyPDF2
+- PDF parsing with pypdf
 - Document type detection (PO, Invoice, Receipt)
 - Database models and operations
 - All 10 MCP tools functional
@@ -260,7 +260,7 @@ Key dependencies include:
 
 - **FastMCP**: MCP server framework
 - **SQLAlchemy**: Database ORM
-- **PyPDF2**: PDF parsing
+- **pypdf**: PDF parsing
 - **Pydantic**: Data validation
 - **Loguru**: Enhanced logging
 - **python-dotenv**: Environment variables
