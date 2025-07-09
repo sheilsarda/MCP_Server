@@ -16,6 +16,11 @@ Centralized configuration using environment variables with sensible defaults.
 import os
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # TODO: Add proper configuration validation with Pydantic
 # from pydantic import BaseSettings, validator
 # from enum import Enum
@@ -54,11 +59,12 @@ def get_database_path() -> str:
     Get the canonical database path.
     
     Priority:
-    1. BUSINESS_DOCS_DB_PATH environment variable (absolute path)
-    2. Default: PROJECT_ROOT/data/business_documents.db
+    1. DATABASE_URL environment variable (for cloud databases like PostgreSQL)
+    2. BUSINESS_DOCS_DB_PATH environment variable (absolute path for SQLite)
+    3. Default: PROJECT_ROOT/data/business_documents.db (SQLite)
     
     Returns:
-        Absolute path to the database file
+        Database URL string (either postgres:// or sqlite:/// format)
         
     # AUDIT ISSUES:
     # 1. No validation of env var (could be malicious path)
@@ -66,13 +72,21 @@ def get_database_path() -> str:
     # 3. No error handling for filesystem operations
     # 4. Return type should be Path, not str for type safety
     """
-    # Check environment variable first
+    # Check for cloud database URL first (Supabase, Heroku, etc.)
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        # Handle Supabase/Heroku format: postgres://... -> postgresql://...
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        return database_url
+    
+    # Check environment variable for local SQLite path
     # SECURITY ISSUE: No validation of environment variable
     env_path = os.getenv('BUSINESS_DOCS_DB_PATH')
     if env_path:
         # TODO: Validate path is safe and accessible
         # TODO: Check if parent directories exist and are writable
-        return os.path.abspath(env_path)
+        return f"sqlite:///{os.path.abspath(env_path)}"
     
     # Default: use data directory in project root
     data_dir = PROJECT_ROOT / 'data'
@@ -83,7 +97,17 @@ def get_database_path() -> str:
         # TODO: Add proper error handling and logging
         raise RuntimeError(f"Cannot create data directory: {e}")
     
-    return str(data_dir / 'business_documents.db')
+    sqlite_path = str(data_dir / 'business_documents.db')
+    return f"sqlite:///{sqlite_path}"
+
+def get_database_url() -> str:
+    """
+    Get the database URL for SQLAlchemy.
+    
+    Returns:
+        Complete database URL string
+    """
+    return get_database_path()
 
 def get_sample_data_path() -> str:
     """Get the path to sample data directory
@@ -107,8 +131,12 @@ def get_logs_path() -> str:
 
 # Database configuration
 # IMPROVEMENT: Use proper configuration class instead of global variables
-DATABASE_PATH = get_database_path()
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+DATABASE_URL = get_database_url()
+# Keep DATABASE_PATH for backward compatibility (SQLite only)
+if DATABASE_URL.startswith('sqlite:///'):
+    DATABASE_PATH = DATABASE_URL.replace('sqlite:///', '')
+else:
+    DATABASE_PATH = None  # Not applicable for cloud databases
 
 # PDF Parser configuration
 # AUDIT ISSUES: Magic numbers, no validation, inconsistent env var names

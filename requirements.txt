@@ -3,6 +3,7 @@ fastmcp>=0.1.0,<2.0.0
 
 # Database dependencies
 sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0  # PostgreSQL adapter for cloud database support
 
 # PDF parsing dependencies
 pypdf>=4.0.0

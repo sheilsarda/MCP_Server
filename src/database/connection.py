@@ -12,13 +12,13 @@ from typing import Optional, Dict, Any
 
 # Import centralized configuration
 try:
-    from ..config import DATABASE_PATH
+    from ..config import DATABASE_URL
 except ImportError:
     # Fallback for when running as script
     import sys
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-    from config import DATABASE_PATH
+    from config import DATABASE_URL
 
 
 # Global variables for database connection
@@ -29,11 +29,11 @@ _session_factory: Optional[sessionmaker] = None
 def get_database_url(db_path: Optional[str] = None) -> str:
     """Get database URL for SQLAlchemy"""
     if db_path is None:
-        db_path = DATABASE_PATH  # Use centralized config instead of os.getcwd()
+        # Use centralized config which now returns full URLs
+        return DATABASE_URL
     
-    # Ensure absolute path for SQLite
+    # Handle legacy db_path parameter (for SQLite only)
     db_path = os.path.abspath(db_path)
-    
     return f"sqlite:///{db_path}"
 
 
@@ -44,17 +44,31 @@ def get_engine(db_path: Optional[str] = None, echo: bool = False) -> Engine:
     if _engine is None:
         database_url = get_database_url(db_path)
         
-        # SQLite-specific configuration
-        _engine = create_engine(
-            database_url,
-            echo=echo,
-            poolclass=StaticPool,
-            connect_args={
-                "check_same_thread": False,  # Allow multi-threading
-                "timeout": 30,  # Connection timeout
-                "isolation_level": None  # Use autocommit mode
-            }
-        )
+        # Database-specific configuration
+        if database_url.startswith('sqlite'):
+            # SQLite-specific configuration
+            _engine = create_engine(
+                database_url,
+                echo=echo,
+                poolclass=StaticPool,
+                connect_args={
+                    "check_same_thread": False,  # Allow multi-threading
+                    "timeout": 30,  # Connection timeout
+                    "isolation_level": None  # Use autocommit mode
+                }
+            )
+        else:
+            # PostgreSQL/other databases configuration
+            _engine = create_engine(
+                database_url,
+                echo=echo,
+                pool_pre_ping=True,  # Verify connections before use
+                pool_recycle=3600,   # Recycle connections every hour
+                connect_args={
+                    "connect_timeout": 30,
+                    "sslmode": "require" if "localhost" not in database_url else "prefer"
+                }
+            )
     
     return _engine
 
