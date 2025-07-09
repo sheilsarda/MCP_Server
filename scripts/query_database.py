@@ -5,7 +5,6 @@ Simple script to query and display database contents
 
 import os
 import sys
-from decimal import Decimal
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))

@@ -13,7 +13,6 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, Numeric, Foreign
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
 from pydantic import BaseModel, Field, field_validator
-import json
 
 Base = declarative_base()
 

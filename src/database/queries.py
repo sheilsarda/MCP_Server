@@ -233,15 +233,20 @@ def get_database_summary(db_path: Optional[str] = None) -> Dict[str, Any]:
         # Unique vendors count
         unique_vendors = session.query(Vendor).count()
         
+        # Build date_range - return None if no dates found, otherwise return dict with string values
+        date_range_result = None
+        if date_range and date_range.earliest is not None and date_range.latest is not None:
+            date_range_result = {
+                "earliest": date_range.earliest.isoformat(),
+                "latest": date_range.latest.isoformat()
+            }
+        
         return {
             "total_documents": total_docs,
             "document_counts": {doc_type.value: count for doc_type, count in doc_counts},
             "total_value": float(po_total + invoice_total),
             "unique_vendors": unique_vendors,
-            "date_range": {
-                "earliest": date_range.earliest.isoformat() if date_range.earliest else None,
-                "latest": date_range.latest.isoformat() if date_range.latest else None
-            },
+            "date_range": date_range_result,
             "top_vendors": [
                 {
                     "name": vendor.name,
